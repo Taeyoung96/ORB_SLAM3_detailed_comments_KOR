@@ -49,7 +49,7 @@ void UpdateLocalMap();
 void Tracking::UpdateLocalMap()
 {
     // This is for visualization
-    // Visualization을 위한 Reference map point
+    // Visualization을 위한 Reference map point 지정
     mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
 
     // Local key frame과 Local key points update를 수행
