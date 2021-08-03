@@ -1,4 +1,21 @@
-# ORB-SLAM3
+# ORB-SLAM3-detailed-comments-KOR  
+
+[ORB SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) 코드 스터디를 하고 기록을 하기 위해 만든 repository입니다.  
+
+현재 스터디가 진행 중이므로 발표를 끝내고 지속적인 주석 update를 진행 할 예정입니다.  
+
+
+<details>
+<summary>Update</summary>
+<div markdown="1">
+
+- 21.08.03 코드 스터디 기록용 repostory 생성
+
+</div>
+</details>
+
+
+## Original Readme.md
 
 ### V0.4: Beta version, 21 April 2021
 **Authors:** Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, [José M. M. Montiel](http://webdiis.unizar.es/~josemari/), [Juan D. Tardos](http://webdiis.unizar.es/~jdtardos/).
