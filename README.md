@@ -2,6 +2,8 @@
 
 [ORB SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) 코드 스터디를 하고 기록을 하기 위해 만든 repository입니다.  
 
+ORB SLAM3의 4가지 모드 중 **Mono-inertial mode**에 초점을 맞추어 스터디를 진행 중입니다.  
+
 현재 스터디가 진행 중이므로 발표를 끝내고 지속적인 주석 update를 진행 할 예정입니다.  
 
 
@@ -13,6 +15,8 @@
 
 </div>
 </details>
+
+Contribute를 진행하기 전 [CONTRIBUTING.md](https://github.com/Taeyoung96/ORB_SLAM3_detailed_comments_KOR/blob/master/CONTRIBUTING.md)을 먼저 확인해주세요!  
 
 
 ## Original Readme.md
