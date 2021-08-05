@@ -21,7 +21,7 @@
 
 함수를 설명할 때  
 ```
-/*!
+/* !
  * @brief 함수에 대한 간략한 설명.
  * @param 함수에 필요한 parameter1
  * @param 함수에 필요한 parameter2
@@ -36,7 +36,7 @@
 
 `Tracking.h`에는  
 ```
-/*!
+/* !
  * @brief Local Map을 Update하는데 사용하는 함수.
  * @param None
  * @return None
@@ -58,7 +58,9 @@ void Tracking::UpdateLocalMap()
 }
 ```
 
-주석을 달 때 참고한 Reference입니다.  
+위와 같은 방식으로 주석을 적어주시면 됩니다.  
+
+**[참고]** 주석을 달 때 참고한 Reference입니다.  
 - [[C++] Kyuseo's C++ 독시젠을 활용한 주석 작성 스타일 가이드라인(규칙)](https://karfn84.tistory.com/entry/C-Kyuseos-C-%EB%8F%85%EC%8B%9C%EC%A0%A0%EC%9D%84-%ED%99%9C%EC%9A%A9%ED%95%9C-%EC%A3%BC%EC%84%9D-%EC%9E%91%EC%84%B1-%EC%8A%A4%ED%83%80%EC%9D%BC-%EA%B0%80%EC%9D%B4%EB%93%9C%EB%9D%BC%EC%9D%B8%EA%B7%9C%EC%B9%99)  
 - [독시젠 A to Z](https://kieuns.com/doku.php?id=tool:doxygen)  
 
