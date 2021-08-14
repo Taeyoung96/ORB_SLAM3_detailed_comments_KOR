@@ -179,7 +179,7 @@ public:
     vector<double> vdPoseOpt_ms;
 #endif
 
-    vector<int> vnKeyFramesLM;
+    vector<int> vnKeyFramesLM;  // LM은 Local Map의 줄임말
     vector<int> vnMapPointsLM;
 
 protected:
@@ -199,17 +199,47 @@ protected:
     void CheckReplacedInLastFrame();
     bool TrackReferenceKeyFrame();
     void UpdateLastFrame();
+
+    /* !
+    * @brief Motion model을 이용하여 Tracking 하는지 판단을 위해 사용하는 함수
+    * @param None
+    * @return Motion model을 이용하여 Tracking하면 true, 아니면 false
+    */
     bool TrackWithMotionModel();
+
     bool PredictStateIMU();
 
     bool Relocalization();
 
+    /* !
+    * @brief Local Map을 Update하기 위해 사용하는 함수
+    * @param None
+    * @return None
+    */
     void UpdateLocalMap();
+
+    /* !
+    * @brief Local Map Points를 Update하기 위해 사용하는 함수
+    * @param None
+    * @return None
+    */
     void UpdateLocalPoints();
+
+    /* !
+    * @brief Local Key Frames를 Update하기 위해 사용하는 함수 (Map point를 가장 많이 관찰하고 있는 Key Frame을 Voting을 통해 찾음)
+    * @param None
+    * @return None
+    */
     void UpdateLocalKeyFrames();
 
+    /* !
+    * @brief Local Map을 Tracking하고 있는지 판단하기 위한 함수 (Map points의 Inlier의 갯수를 활용)
+    * @param None
+    * @return Local Map을 Track하고 있으면 true, 아니면 false
+    */
     bool TrackLocalMap();
-    bool TrackLocalMap_old();
+
+    bool TrackLocalMap_old();   // 쓰이지 않음.
     void SearchLocalPoints();
 
     bool NeedNewKeyFrame();
