@@ -2173,66 +2173,95 @@ void Tracking::Track()
 }
 
 
+/* !
+ * @brief Stereo 초기화 함수 (Stereo or Stereo-IMU)
+ * @param None
+ * @return None
+*/
 void Tracking::StereoInitialization()
 {
-    if(mCurrentFrame.N>500)
+    // N: Keypoints의 개수
+    if(mCurrentFrame.N>500) // Keypoints의 개수가 500개 이상일 때 초기화를 진행하고, / 이하인 경우에는 초기화를 진행하지 않음
     {
-        if (mSensor == System::IMU_STEREO)
+        if (mSensor == System::IMU_STEREO) // Stereo-Inertial mode인 경우
         {
+            // CurrentFrame과 LastFrame에 대한 IMU-Preintegration 정보가 존재하는지 체크
             if (!mCurrentFrame.mpImuPreintegrated || !mLastFrame.mpImuPreintegrated)
             {
                 cout << "not IMU meas" << endl;
-                return;
+                return; // CurrentFrame과 LastFrame에 대한 IMU-Preintegration 정보가 존재하지 않으면 초기화 종료
             }
 
+            // CurrentFrame과 LastFrame에 대한 IMU-Preintegration의 평균 가속도값의 차이가 0.5 이상인지 확인
             if (cv::norm(mCurrentFrame.mpImuPreintegratedFrame->avgA-mLastFrame.mpImuPreintegratedFrame->avgA)<0.5)
             {
                 cout << "not enough acceleration" << endl;
-                return;
+                return; // CurrentFrame과 LastFrame에 대한 IMU-Preintegration의 평균값의 차이가 0.5 미만인 경우 초기화 종료(충분한 움직임 값을 획득해야됨)
             }
-
+            
+            // Last KeyFrame에 대한 IMU-Preintegration 객체를 초기화 (메모리를 해제)
             if(mpImuPreintegratedFromLastKF)
                 delete mpImuPreintegratedFromLastKF;
 
+            // IMU::Bias(): IMU sensor의 noise를 반환 [acceleration(3), angular velocity(3)]
+            //            : -> bax,bay,baz,bwx,bwy,bwz
+            // *mpImuCalib: IMU-Camera에 대한 Transformation matrix 정보 (Calibration 정보)
+            //            : cv::Mat Tbc;
+            //            : cv::Mat Cov, CovWalk;
+            // IMU::Preintegrated(): 딱히 계산을 하지는 않음. White noise와 Random walk noise에 대한 coveriance matrix와 noise값을 복사하여 초기화만함
             mpImuPreintegratedFromLastKF = new IMU::Preintegrated(IMU::Bias(),*mpImuCalib);
+
+            // mpImuPreintegratedFromLastKF 객체의 주소값을 넘김
             mCurrentFrame.mpImuPreintegrated = mpImuPreintegratedFromLastKF;
         }
 
         // Set Frame pose to the origin (In case of inertial SLAM to imu)
+        // CurrentFrame을 Global-coordinate으로 설정함: Origin(0,0,0)
         if (mSensor == System::IMU_STEREO)
         {
-            cv::Mat Rwb0 = mCurrentFrame.mImuCalib.Tcb.rowRange(0,3).colRange(0,3).clone();
-            cv::Mat twb0 = mCurrentFrame.mImuCalib.Tcb.rowRange(0,3).col(3).clone();
-            mCurrentFrame.SetImuPoseVelocity(Rwb0, twb0, cv::Mat::zeros(3,1,CV_32F));
+            cv::Mat Rwb0 = mCurrentFrame.mImuCalib.Tcb.rowRange(0,3).colRange(0,3).clone(); // [Rotation]    imu -> cam
+            cv::Mat twb0 = mCurrentFrame.mImuCalib.Tcb.rowRange(0,3).col(3).clone();        // [Translation] imu -> cam
+            mCurrentFrame.SetImuPoseVelocity(Rwb0, twb0, cv::Mat::zeros(3,1,CV_32F));       // world -> cam -> body
         }
         else
             mCurrentFrame.SetPose(cv::Mat::eye(4,4,CV_32F));
 
         // Create KeyFrame
+        // KeyFrame에 대한 객체를 생성합니다.
+        //   - mCurrentFrame로부터 CurrentFrame의 Left_image, Right_image를 저장합니다.
+        //   - mCurrentFrame로부터 Global pose에 대한 정보(Tcw)와 IMU bias정보를 저장합니다.
+        //   - mpAtlas->GetCurrentMap()로부터 현재 map에 대한 id정보를 저장합니다.
+        //   - mpKeyFrameDB의 정보를 그대로 저장합니다. (정확한 용도는 잘몰르겠음 ???)
         KeyFrame* pKFini = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
 
         // Insert KeyFrame in the map
+        // 생성된 KeyFrame 객체를 추가합니다.
         mpAtlas->AddKeyFrame(pKFini);
 
         // Create MapPoints and asscoiate to KeyFrame
-        if(!mpCamera2){
+        if(!mpCamera2){ // FishEye가 아니면
+            // MapPoint를 생성합니다.
+            // mCurrentFrame.N은 keypoint의 개수
             for(int i=0; i<mCurrentFrame.N;i++)
             {
-                float z = mCurrentFrame.mvDepth[i];
-                if(z>0)
+                // Feature_point에 대한 Depth 정보를 가져옵니다.
+                float z = mCurrentFrame.mvDepth[i];                
+                if(z>0) // depth값이 존재하면
                 {
-                    cv::Mat x3D = mCurrentFrame.UnprojectStereo(i);
-                    MapPoint* pNewMP = new MapPoint(x3D,pKFini,mpAtlas->GetCurrentMap());
-                    pNewMP->AddObservation(pKFini,i);
-                    pKFini->AddMapPoint(pNewMP,i);
-                    pNewMP->ComputeDistinctiveDescriptors();
-                    pNewMP->UpdateNormalAndDepth();
-                    mpAtlas->AddMapPoint(pNewMP);
+                    cv::Mat x3D = mCurrentFrame.UnprojectStereo(i); // Camera perspective model을 이용하여 3D map-point를 계산합니다.
+                    MapPoint* pNewMP = new MapPoint(x3D,pKFini,mpAtlas->GetCurrentMap()); // Global(world) Map포인트로 변환후 저장합니다.
+                    pNewMP->AddObservation(pKFini,i); // Current Frame에서 관찰된 keypoint를 추가합니다.
+                    pKFini->AddMapPoint(pNewMP,i);    // KeyFrame 객체에 3D Map-point를 추가합니다.
+                    pNewMP->ComputeDistinctiveDescriptors(); // 현재 keypoint에 대한 Descriptor를 계산한다. (정확히 잘 몰르겠음)
+                                                             // Map-point가 추가적으로 생겼을때, 추가할지 기존의 map-point에 업데이트할 지, 확인하기 위한 Descriptor를 생성하는것 같음
+                                                             // 또한 BA와 tracking features의 수에 대하여 더 좋은 descriptor가 생성된다면, descriptor를 갱신하는 것 같음
+                    pNewMP->UpdateNormalAndDepth(); // MapPoint에 대하여 Normal vector와 Depth 정보를 업데이트
+                    mpAtlas->AddMapPoint(pNewMP);   // Atlas객체에 3D Map-point를 추가합니다.
 
-                    mCurrentFrame.mvpMapPoints[i]=pNewMP;
+                    mCurrentFrame.mvpMapPoints[i]=pNewMP; // 갱신된 Map-point정보를 업데이트해줌
                 }
             }
-        } else{
+        } else{ // fisheye에 대한 내용(내용은 위와 유사함)
             for(int i = 0; i < mCurrentFrame.Nleft; i++){
                 int rightIndex = mCurrentFrame.mvLeftToRightMatch[i];
                 if(rightIndex != -1){
@@ -2240,7 +2269,7 @@ void Tracking::StereoInitialization()
 
                     MapPoint* pNewMP = new MapPoint(x3D,pKFini,mpAtlas->GetCurrentMap());
 
-                    pNewMP->AddObservation(pKFini,i);
+                    pNewMP->AddObservation(pKFini,i); 
                     pNewMP->AddObservation(pKFini,rightIndex + mCurrentFrame.Nleft);
 
                     pKFini->AddMapPoint(pNewMP,i);
@@ -2256,24 +2285,29 @@ void Tracking::StereoInitialization()
             }
         }
 
+        // 출력문
         Verbose::PrintMess("New Map created with " + to_string(mpAtlas->MapPointsInMap()) + " points", Verbose::VERBOSITY_QUIET);
 
-        mpLocalMapper->InsertKeyFrame(pKFini);
+        mpLocalMapper->InsertKeyFrame(pKFini); // LocalMapper에 current key-frame에 대한 정보를 추가
 
-        mLastFrame = Frame(mCurrentFrame);
-        mnLastKeyFrameId=mCurrentFrame.mnId;
-        mpLastKeyFrame = pKFini;
-        mnLastRelocFrameId = mCurrentFrame.mnId;
+        mLastFrame = Frame(mCurrentFrame);      // currentframe에 대한 정보를 last-keyframe에 정보를 저장하고, 새로운 frame을 받을 준비
+        mnLastKeyFrameId=mCurrentFrame.mnId;    // currentframe에 대한 id정보를 저장
+        mpLastKeyFrame = pKFini;                // current key-frame에 대한 정보를 last-keyframe에 저장
+        mnLastRelocFrameId = mCurrentFrame.mnId;// current key-frame에 대한 id 정보를 last-keyframe에 저장
 
-        mvpLocalKeyFrames.push_back(pKFini);
-        mvpLocalMapPoints=mpAtlas->GetAllMapPoints();
-        mpReferenceKF = pKFini;
-        mCurrentFrame.mpReferenceKF = pKFini;
+        mvpLocalKeyFrames.push_back(pKFini);    // local keyframe에 저장
+        mvpLocalMapPoints=mpAtlas->GetAllMapPoints(); // Atlas의 map-point의 vector 포인터를 lcoal-map-point에 넘겨줌
+        mpReferenceKF = pKFini; // 현재 KF를 reference KF로 설정
+        mCurrentFrame.mpReferenceKF = pKFini; // 현재 KF를 currentFrame의 referenceKF로 설정
 
+        // mvpLocalMapPoints를 Atlas의 refrence KF로 설정
+        // Atlas의 ReferenceMapPoint는 Map을 Drawing할 때 사용됨
         mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
 
+        // KF를 저장
         mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.push_back(pKFini);
 
+        // Map에 point를 drawing할때 필요한 좌표계 변환 정보를 저장
         mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
 
         mState=OK;
@@ -2508,47 +2542,79 @@ void Tracking::CreateInitialMapMonocular()
 }
 
 
+// #############################################################################################################################################
+// 정진용 연구원님의 블로그에서 ORBSLAM-Atlas 내용 인용 (http://jinyongjeong.github.io/2019/11/07/IROS2019_SLAM_list/)
+// [IROS 2019] ORBSLAM-Atlas: a robust and accurate multi-map system
+// ORBSLAM-Atals란?
+// - 기존 ORB-SLAM은 tracking loss가 발생하면 mapping이 중단되지만, ORB-SLAM-Atlas는 tracking loss가 발생하면 새로운 submap을 생성하고, 기존의 submap과 동일 영역을 찾으면 merge
+// - 제한없이 여러개의 submap을 다루기 위한 시스템
+// - submap간의 overlap을 검출 및 merge
+// - 각 atlas는 효율적인 Place recognition을 위해 각각의 unique한 DBow를 갖고 있음
+// #############################################################################################################################################
+/* !
+ * @brief Stereo Atlas Map을 관리하기 위한 객체 생성
+ * @param None
+ * @return None
+*/
 void Tracking::CreateMapInAtlas()
 {
-    mnLastInitFrameId = mCurrentFrame.mnId;
-    mpAtlas->CreateNewMap();
+    mnLastInitFrameId = mCurrentFrame.mnId; // currentFrame의 ID를 LastFrame ID에 복사
+    
+    // 새로운 map을 생성
+    // map들은 vector<Map> 자료형에 의해 관리됨 (Map.h에서의 class 객체)
+    // 기존 맵을 있다면 저장하고, 새로운 맵을 생성
+    mpAtlas->CreateNewMap(); 
+
+    // Stereo+IMU or Mono+IMU 시스템인 경우
     if (mSensor==System::IMU_STEREO || mSensor == System::IMU_MONOCULAR)
-        mpAtlas->SetInertialSensor();
-    mbSetInit=false;
+        mpAtlas->SetInertialSensor(); // IMU가 사용되는지 유무를 설정하는 함수 // mbIsInertial = true가 전부
+    mbSetInit=false; // 초기화 유무에 대한 flag
 
-    mnInitialFrameId = mCurrentFrame.mnId+1;
-    mState = NO_IMAGES_YET;
-
-    // Restart the variable with information about the last KF
+    mnInitialFrameId = mCurrentFrame.mnId+1; // Initial-Frame id를 마지막 프레임의 'ID+1'로 할당
+                                             // 새로운 atlas-map에 대한 시작 프레임 id를 설정
+    mState = NO_IMAGES_YET; // 새로운 이미지가 없는 상태로 설정
+    
+    // 새로 생성된 atlas-map에 대한 변수들은 마지막 KF에 대한 변수들의 값을 가져오고, 재시작
     mVelocity = cv::Mat();
-    mnLastRelocFrameId = mnLastInitFrameId; // The last relocation KF_id is the current id, because it is the new starting point for new map
+    mnLastRelocFrameId = mnLastInitFrameId; // 기존 map에 대한 마지막 frame id(mnLastInitFrameId)는 relocalization을 위한 시작 프레임으로 설정
     Verbose::PrintMess("First frame id in map: " + to_string(mnLastInitFrameId+1), Verbose::VERBOSITY_NORMAL);
-    mbVO = false; // Init value for know if there are enough MapPoints in the last KF
+    mbVO = false; // 마지막 KF에 충분한 MapPoint의 존재 유무에 대한 flag
+
+    // mono || mono-imu인 경우
     if(mSensor == System::MONOCULAR || mSensor == System::IMU_MONOCULAR)
     {
-        if(mpInitializer)
+        // 초기화 변수에 대한 제거
+        if(mpInitializer) 
             delete mpInitializer;
+        
+        // 초기화 변수에 대한 재할당
         mpInitializer = static_cast<Initializer*>(NULL);
     }
 
+    // mono-imu || stereo-imu인 경우
     if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO ) && mpImuPreintegratedFromLastKF)
     {
+        // 마지막 KF에 대한 preintegration 변수 메모리를 제거
         delete mpImuPreintegratedFromLastKF;
+
+        // 새로운 preintegration객체를 생성
         mpImuPreintegratedFromLastKF = new IMU::Preintegrated(IMU::Bias(),*mpImuCalib);
     }
 
+    // mpLastKeyFrame변수 초기화
     if(mpLastKeyFrame)
         mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
 
+    // mpReferenceKF 초기화
     if(mpReferenceKF)
         mpReferenceKF = static_cast<KeyFrame*>(NULL);
 
-    mLastFrame = Frame();
-    mCurrentFrame = Frame();
-    mvIniMatches.clear();
+    // 각 변수 초기화
+    mLastFrame = Frame();    // mLastFrame 초기화
+    mCurrentFrame = Frame(); // mCurrentFrame 초기화
+    mvIniMatches.clear();    // mvIniMatches 초기화
 
     mbCreatedMap = true;
-
 }
 
 void Tracking::CheckReplacedInLastFrame()
