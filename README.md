@@ -25,7 +25,7 @@ Contribute를 진행하기 전 [CONTRIBUTING.md](https://github.com/Taeyoung96/O
 |Examples|ORB SLAM3를 실행하기 위한 코드들이 담겨 있는 폴더|  
 |ThirdParty|ORB SLAM3에 필요한 외부 라이브러리(ex.DBoW2, g2o)들이 담겨 있는 폴더| 
 |Vocabulary|Bag of Words 방식으로 Place Recognition을 할 때 필요한 거대한 Data Set이 담겨 있는 폴더|  
-|evaluation|ORB SLAM3를 활용한 Visual-Inertial trajectory와 Groundtruth를 비교할 수 있는 코드가 담겨 있는 폴더| 
+|evaluation|ORB SLAM3를 활용한 Visual-Inertial trajectory와 </br> Groundtruth를 비교할 수 있는 코드가 담겨 있는 폴더| 
 |include|ORB SLAM3 관련 헤더파일이 담겨 있는 폴더|
 |src|ORB SLAM3 관련 소스파일이 담겨 있는 폴더|  
 
