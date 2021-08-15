@@ -93,6 +93,11 @@ public:
         return mpLastKeyFrame;
     }
 
+    /* !
+    * @brief Stereo Atlas Map을 관리하기 위한 객체 생성
+    * @param None
+    * @return None
+    */
     void CreateMapInAtlas();
     std::mutex mMutexTracks;
 
@@ -188,6 +193,11 @@ protected:
     void Track();
 
     // Map initialization for stereo and RGB-D
+    /* !
+    * @brief Stereo 초기화 함수 (Stereo or Stereo-IMU)
+    * @param None
+    * @return None
+    */
     void StereoInitialization();
 
     // Map initialization for monocular

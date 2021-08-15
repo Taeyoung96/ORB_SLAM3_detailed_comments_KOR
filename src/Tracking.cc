@@ -2172,12 +2172,6 @@ void Tracking::Track()
     }
 }
 
-
-/* !
- * @brief Stereo 초기화 함수 (Stereo or Stereo-IMU)
- * @param None
- * @return None
-*/
 void Tracking::StereoInitialization()
 {
     // N: Keypoints의 개수
@@ -2551,11 +2545,6 @@ void Tracking::CreateInitialMapMonocular()
 // - submap간의 overlap을 검출 및 merge
 // - 각 atlas는 효율적인 Place recognition을 위해 각각의 unique한 DBow를 갖고 있음
 // #############################################################################################################################################
-/* !
- * @brief Stereo Atlas Map을 관리하기 위한 객체 생성
- * @param None
- * @return None
-*/
 void Tracking::CreateMapInAtlas()
 {
     mnLastInitFrameId = mCurrentFrame.mnId; // currentFrame의 ID를 LastFrame ID에 복사
