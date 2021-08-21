@@ -3282,6 +3282,7 @@ void Tracking::CreateNewKeyFrame()
     //cout  << "end creating new KF" << endl;
 }
 
+//!
 void Tracking::SearchLocalPoints()
 {
     // Do not search map points already matched
@@ -3311,16 +3312,20 @@ void Tracking::SearchLocalPoints()
     {
         MapPoint* pMP = *vit;
 
+        //^ Map points already matched
         if(pMP->mnLastFrameSeen == mCurrentFrame.mnId)
             continue;
+        //^ To be removed or already removed
         if(pMP->isBad())
             continue;
         // Project (this fills MapPoint variables for matching)
+        //^ Project local map points onto current frame
         if(mCurrentFrame.isInFrustum(pMP,0.5))
         {
             pMP->IncreaseVisible();
             nToMatch++;
         }
+        //^ If this map point lies on the track (for visualization)
         if(pMP->mbTrackInView)
         {
             mCurrentFrame.mmProjectPoints[pMP->mnId] = cv::Point2f(pMP->mTrackProjX, pMP->mTrackProjY);
@@ -3331,6 +3336,8 @@ void Tracking::SearchLocalPoints()
     {
         ORBmatcher matcher(0.8);
         int th = 1;
+
+        //^ Set threshold
         if(mSensor==System::RGBD)
             th=3;
         if(mpAtlas->isImuInitialized())
@@ -3352,6 +3359,7 @@ void Tracking::SearchLocalPoints()
         if(mState==LOST || mState==RECENTLY_LOST) // Lost for less than 1 second
             th=15;
 
+        //^ match
         int matches = matcher.SearchByProjection(mCurrentFrame, mvpLocalMapPoints, th, mpLocalMapper->mbFarPoints, mpLocalMapper->mThFarPoints);
     }
 }
@@ -3562,12 +3570,15 @@ void Tracking::UpdateLocalKeyFrames()
     }
 }
 
+//!
 bool Tracking::Relocalization()
 {
     Verbose::PrintMess("Starting relocalization", Verbose::VERBOSITY_NORMAL);
     // Compute Bag of Words Vector
     mCurrentFrame.ComputeBoW();
 
+    //^ Extract relocalization candidates
+    //^ Candidated if sharing words
     // Relocalization is performed when tracking is lost
     // Track Lost: Query KeyFrame Database for keyframe candidates for relocalisation
     vector<KeyFrame*> vpCandidateKFs = mpKeyFrameDB->DetectRelocalizationCandidates(&mCurrentFrame, mpAtlas->GetCurrentMap());
@@ -3594,6 +3605,7 @@ bool Tracking::Relocalization()
 
     int nCandidates=0;
 
+    //^ Match candiate points and current frame
     for(int i=0; i<nKFs; i++)
     {
         KeyFrame* pKF = vpCandidateKFs[i];
@@ -3626,9 +3638,11 @@ bool Tracking::Relocalization()
     {
         for(int i=0; i<nKFs; i++)
         {
+            //^ Discarded
             if(vbDiscarded[i])
                 continue;
 
+            //^ Inlier -> pnp Solve
             // Perform 5 Ransac Iterations
             vector<bool> vbInliers;
             int nInliers;
@@ -3637,6 +3651,7 @@ bool Tracking::Relocalization()
             MLPnPsolver* pSolver = vpMLPnPsolvers[i];
             cv::Mat Tcw = pSolver->iterate(5,bNoMore,vbInliers,nInliers);
 
+            //^ Ransac fail
             // If Ransac reachs max. iterations discard keyframe
             if(bNoMore)
             {
@@ -3644,6 +3659,7 @@ bool Tracking::Relocalization()
                 nCandidates--;
             }
 
+            //^ Ransac success
             // If a Camera Pose is computed, optimize
             if(!Tcw.empty())
             {
@@ -3664,6 +3680,7 @@ bool Tracking::Relocalization()
                         mCurrentFrame.mvpMapPoints[j]=NULL;
                 }
 
+                //^ Optimize (Current frame <-> map point : get from ransac plane)
                 int nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
                 if(nGood<10)
