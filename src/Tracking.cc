@@ -1234,7 +1234,6 @@ void Tracking::SetStepByStep(bool bSet)
 }
 
 
-
 cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp, string filename)
 {
     mImGray = imRectLeft;
@@ -3286,19 +3285,26 @@ void Tracking::CreateNewKeyFrame()
 void Tracking::SearchLocalPoints()
 {
     // Do not search map points already matched
+    //^ Current frame에서 이미 매칭된 MapPoint들에 대해서, 즉 CurrentFrame의 KeyPoints
     for(vector<MapPoint*>::iterator vit=mCurrentFrame.mvpMapPoints.begin(), vend=mCurrentFrame.mvpMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
         if(pMP)
         {
+            //^ Bad MapPoint -> NULL로
             if(pMP->isBad())
             {
                 *vit = static_cast<MapPoint*>(NULL);
             }
             else
             {
+                //^ For visualization
+                //^ 나중에 GetFoundRatio에서 사용됨. 
+                //^ FoundRatio = Found/Visible, 일정 FoundRatio 밑으로 떨어진 MapPoint는 삭제됨.  
                 pMP->IncreaseVisible();
+                //^ 해당 MapPoint가 마지막으로 보여진 Frame은 CurrentFrame이다.
                 pMP->mnLastFrameSeen = mCurrentFrame.mnId;
+                //^ TrackInView에서 제외
                 pMP->mbTrackInView = false;
                 pMP->mbTrackInViewR = false;
             }
@@ -3308,36 +3314,43 @@ void Tracking::SearchLocalPoints()
     int nToMatch=0;
 
     // Project points in frame and check its visibility
+    //^ 이전에 찾은 LocalMapPoints 중에서
     for(vector<MapPoint*>::iterator vit=mvpLocalMapPoints.begin(), vend=mvpLocalMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
 
-        //^ Map points already matched
+        //^ 이미 Matching 된 LocalMapPoint는 skip한다.
         if(pMP->mnLastFrameSeen == mCurrentFrame.mnId)
             continue;
-        //^ To be removed or already removed
+        //^ Bad LocalMapPoint는 skip한다.
         if(pMP->isBad())
             continue;
         // Project (this fills MapPoint variables for matching)
-        //^ Project local map points onto current frame
+        //^ 그 외의 경우, 
+        //^ LocalMapPoint가 CurrentFrame의 Frustum에 들어오면,
         if(mCurrentFrame.isInFrustum(pMP,0.5))
         {
+            //^ Visible.
             pMP->IncreaseVisible();
+            //^ Match됨.
             nToMatch++;
         }
-        //^ If this map point lies on the track (for visualization)
+        //^ For visualization
+        //^ LocalMapPoint 중에서 CurrentFrame의 Frustnum에 들어온 MapPoint는 ProjectPoints에 저장하여 
+        //^ 나중에 Drawer에서 시각화해준다.
         if(pMP->mbTrackInView)
         {
             mCurrentFrame.mmProjectPoints[pMP->mnId] = cv::Point2f(pMP->mTrackProjX, pMP->mTrackProjY);
         }
     }
 
+    //^ 하나라도 LocalMapPoints 중에서 CurrentFrame의 Frustum에 들어온게 있으면(=Has seen) 된게 있으면,
     if(nToMatch>0)
     {
         ORBmatcher matcher(0.8);
         int th = 1;
 
-        //^ Set threshold
+        //^ 시스템 환경에 따라 ORB Matcher의 threshold 다름.
         if(mSensor==System::RGBD)
             th=3;
         if(mpAtlas->isImuInitialized())
@@ -3359,7 +3372,10 @@ void Tracking::SearchLocalPoints()
         if(mState==LOST || mState==RECENTLY_LOST) // Lost for less than 1 second
             th=15;
 
-        //^ match
+        //^ LocalMapPoints의 descriptor와 CurrentFrame의 KeyPoints의 descriptor 간 matching
+        //^ Match된 KeyPoints 갯수 반환
+        //^ 그러나 쓰이진 않음.
+        //^ CurrentFrame에 Matching된 MapPoint를 저장하는 멤버인 mvpMapPoints에 Match된 KeyPoints 저장하는 함수
         int matches = matcher.SearchByProjection(mCurrentFrame, mvpLocalMapPoints, th, mpLocalMapper->mbFarPoints, mpLocalMapper->mThFarPoints);
     }
 }
@@ -3575,14 +3591,17 @@ bool Tracking::Relocalization()
 {
     Verbose::PrintMess("Starting relocalization", Verbose::VERBOSITY_NORMAL);
     // Compute Bag of Words Vector
+    //^ CurrentFrame이 가지고 있는 ORB descriptor로부터,
+    //^ BoW vector와 Feature vector를 계산하여 CurrentFrame의 멤버(mBowVec, mFeatVec)에 update한다.
     mCurrentFrame.ComputeBoW();
 
-    //^ Extract relocalization candidates
-    //^ Candidated if sharing words
     // Relocalization is performed when tracking is lost
     // Track Lost: Query KeyFrame Database for keyframe candidates for relocalisation
+    //^ Atlas에 있는 CurrentMap으로 부터 CurrentFrame의 BoW를 공유하는 KeyFrame들 중에서,
+    //^ similarity score가 75% 이상인 KeyFrame들을 Relocalization 후보 Keyframe으로 뽑는다. 
     vector<KeyFrame*> vpCandidateKFs = mpKeyFrameDB->DetectRelocalizationCandidates(&mCurrentFrame, mpAtlas->GetCurrentMap());
 
+    //^ 후보 KeyFrame이 없으면 Relocalization fail.
     if(vpCandidateKFs.empty()) {
         Verbose::PrintMess("There are not candidates", Verbose::VERBOSITY_NORMAL);
         return false;
@@ -3597,6 +3616,7 @@ bool Tracking::Relocalization()
     vector<MLPnPsolver*> vpMLPnPsolvers;
     vpMLPnPsolvers.resize(nKFs);
 
+    
     vector<vector<MapPoint*> > vvpMapPointMatches;
     vvpMapPointMatches.resize(nKFs);
 
@@ -3605,53 +3625,76 @@ bool Tracking::Relocalization()
 
     int nCandidates=0;
 
-    //^ Match candiate points and current frame
+    //^ 전체 후보 KeyFrame에 대해서,
     for(int i=0; i<nKFs; i++)
     {
         KeyFrame* pKF = vpCandidateKFs[i];
+        //^ KeyFrame이 Bad면 discard
+        //^ Bad의 의미 : 버려지는 KeyFrame, 어디선가 erase되어 메모리 해제를 기다리는 KeyFrame
         if(pKF->isBad())
             vbDiscarded[i] = true;
         else
         {
+            //^ 후보 KeyFrame의 descriptor와 CurrentFrame의 descriptor 간 matching
+            //^ vvpMapPointMatches에는 matching된 MapPoint가 담김.
             int nmatches = matcher.SearchByBoW(pKF,mCurrentFrame,vvpMapPointMatches[i]);
+            
+            //^ match된 MapPoint가 적으면 discard
             if(nmatches<15)
             {
                 vbDiscarded[i] = true;
                 continue;
             }
+            //^ match된 MapPoint가 충분하면,
             else
             {
+                //^ Solve PnP
+                //^ Camera의 intrinsic parameter,
+                //^ World coordinate 상의 3차원 Points,
+                //^ Image(Frame) 상의 2차원 Points
+                //^ 를 알고 있을 때 Camera pose를 예측하는 solver
+                //^ MLPnP : Maximum Likelihood solution to the Perspective-n-Point
                 MLPnPsolver* pSolver = new MLPnPsolver(mCurrentFrame,vvpMapPointMatches[i]);
                 pSolver->SetRansacParameters(0.99,10,300,6,0.5,5.991);  //This solver needs at least 6 points
+                //^ PnPsolver 객체를 현재 KeyFrame index에 저장
                 vpMLPnPsolvers[i] = pSolver;
                 nCandidates++;
             }
         }
     }
+    //^ Vector 상세 설명
+    //^ 후보 KeyFrame (vpCandidateKFs)          : [a, b, c, d, e, f ...] 
+    //^ Discarded KeyFrame (vbDiscarded)        : [1, 1, 0, 1, 0, 0 ...], 0: FALSE, 1: TRUE
+    //^ MLPnPSovler 객체 (vpMLPnPsolvers)       : [-, -, S, -, S, S ...], -: NULL, S: 객체
+    //^ Match된 MapPoint (vvpMapPointMatches)   : [-, -, M, -, M, M ... ], -: NULL, M: Match된 MapPoints vector(KF의 MapPoints)  
 
     // Alternatively perform some iterations of P4P RANSAC
     // Until we found a camera pose supported by enough inliers
     bool bMatch = false;
     ORBmatcher matcher2(0.9,true);
 
+    //^ 후보 MLPnPsolver가 없거나 Match될 때까지,
     while(nCandidates>0 && !bMatch)
     {
+        //^ 후보 KeyFrame들에 대해서,
         for(int i=0; i<nKFs; i++)
         {
-            //^ Discarded
+            //^ Discarded KeyFrame은 skip
             if(vbDiscarded[i])
                 continue;
 
-            //^ Inlier -> pnp Solve
             // Perform 5 Ransac Iterations
             vector<bool> vbInliers;
             int nInliers;
             bool bNoMore;
 
+            //^ Match된 MapPoint들(vvpMapPointMatches)에 대해서
+            //^ 5 iterate RANSAC 수행
+            //^ Tcw : RANSAC을 통해 나온 Camera pose
             MLPnPsolver* pSolver = vpMLPnPsolvers[i];
             cv::Mat Tcw = pSolver->iterate(5,bNoMore,vbInliers,nInliers);
 
-            //^ Ransac fail
+            //^ RANSAC Fail (1. over iteration, 2. MapPoints가 6개보다 작을 때)
             // If Ransac reachs max. iterations discard keyframe
             if(bNoMore)
             {
@@ -3659,46 +3702,63 @@ bool Tracking::Relocalization()
                 nCandidates--;
             }
 
-            //^ Ransac success
+            //^ RANSAC 성공
             // If a Camera Pose is computed, optimize
             if(!Tcw.empty())
             {
+                //^ RANSAC 결과 Camera Pose를 CurrentFrame의 pose로 copy
                 Tcw.copyTo(mCurrentFrame.mTcw);
 
-                set<MapPoint*> sFound;
+                set<MapPoint*> sFound; 
 
                 const int np = vbInliers.size();
 
+                //^ RANSAC inlier들에 대해서,
                 for(int j=0; j<np; j++)
                 {
+                    //^ Inlier 이면,
                     if(vbInliers[j])
                     {
+                        //^ 해당 index의 MapPoint는 CurrentFrame에서 match된 MapPoint.
                         mCurrentFrame.mvpMapPoints[j]=vvpMapPointMatches[i][j];
+                        //^ sFound(std::set) : Match된 MapPoint들 중에서 RANSAC의 inlier는 Found로 간주(중복 없음) 
                         sFound.insert(vvpMapPointMatches[i][j]);
                     }
+                    //^ Inlier가 아니면,
                     else
+                        //^ 해당 index의 MapPoint는 CurrentFrame에서 NULL
                         mCurrentFrame.mvpMapPoints[j]=NULL;
                 }
+                // mCurrentFrame.mvpMapPoints 채워지게 됨.
 
-                //^ Optimize (Current frame <-> map point : get from ransac plane)
+                //^ Match된 MapPoint들로 graph를 이루고 graph optimization을 통해 camera pose를 구함.
+                //^ nGood : nInitialCorrespondences-nBad
+                //^ -> Initial vertex 갯수(nInitialCorrespondences)에서 optimization 결과 outlier(nBad)로 판명난 vertex 갯수를 뺀 값
                 int nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
+                //^ nGood이 너무 적으면 다음 KeyFrame으로
                 if(nGood<10)
                     continue;
 
+                //^ Outlier로 판명난 KeyPoint들은 set NULL.
                 for(int io =0; io<mCurrentFrame.N; io++)
                     if(mCurrentFrame.mvbOutlier[io])
                         mCurrentFrame.mvpMapPoints[io]=static_cast<MapPoint*>(NULL);
 
+                //^ nGood이 아쉬우면 한번 더
                 // If few inliers, search by projection in a coarse window and optimize again
                 if(nGood<50)
                 {
+                    //^ ORB matcher의 parameter 조금더 느슨하게 해서 match되는 MapPoint 추가로 찾음
                     int nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,10,100);
 
+                    //^ 추가로 match된 MapPoint와 nGood이 50이 넘으면,
                     if(nadditional+nGood>=50)
                     {
+                        //^ 한번 더 optimize
                         nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
+                        //^ 한번 더..
                         // If many inliers but still not enough, search by projection again in a narrower window
                         // the camera has been already optimized with many points
                         if(nGood>30 && nGood<50)
@@ -3707,8 +3767,10 @@ bool Tracking::Relocalization()
                             for(int ip =0; ip<mCurrentFrame.N; ip++)
                                 if(mCurrentFrame.mvpMapPoints[ip])
                                     sFound.insert(mCurrentFrame.mvpMapPoints[ip]);
+                            //^ 이번엔 parameter 빡세게(이미 많은 points들이 optimized 되었기 때문)
                             nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,3,64);
 
+                            //^ 진짜 마지막..
                             // Final optimization
                             if(nGood+nadditional>=50)
                             {
@@ -3722,28 +3784,30 @@ bool Tracking::Relocalization()
                     }
                 }
 
-
+                //^ Good match
                 // If the pose is supported by enough inliers stop ransacs and continue
                 if(nGood>=50)
                 {
                     bMatch = true;
+                    //^ 다른 후보 KeyFrame 볼 것도 없이 break (이 정도면 relocalization 성공)
                     break;
                 }
             }
         }
     }
 
+    //^ Good match가 없음.
     if(!bMatch)
     {
         return false;
     }
+    //^ Relocalization 성공!
     else
     {
         mnLastRelocFrameId = mCurrentFrame.mnId;
         cout << "Relocalized!!" << endl;
         return true;
     }
-
 }
 
 void Tracking::Reset(bool bLocMap)
