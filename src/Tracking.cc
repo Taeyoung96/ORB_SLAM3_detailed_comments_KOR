@@ -1215,22 +1215,22 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
 
 void Tracking::SetLocalMapper(LocalMapping *pLocalMapper)
 {
-    mpLocalMapper=pLocalMapper;
+    mpLocalMapper=pLocalMapper; // Localmapping.cc 포인터 클래스 선언
 }
 
 void Tracking::SetLoopClosing(LoopClosing *pLoopClosing)
 {
-    mpLoopClosing=pLoopClosing;
+    mpLoopClosing=pLoopClosing;    // Loopclosing.cc 포인터 클래스 선언
 }
 
 void Tracking::SetViewer(Viewer *pViewer)
 {
-    mpViewer=pViewer;
+    mpViewer=pViewer;   // Viewer.cc 포인터 클래스 선언 
 }
 
 void Tracking::SetStepByStep(bool bSet)
 {
-    bStepByStep = bSet;
+    bStepByStep = bSet;   // bool 타입 변수 선언
 }
 
 
