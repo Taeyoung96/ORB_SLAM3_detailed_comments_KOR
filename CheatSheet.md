@@ -8,3 +8,4 @@
   `bool`인 경우 `b`를 활용  
 - `KF`는 `KeyFrame`의 줄임말입니다.  
 - `LM`은 `Local Mapping`의 줄임말입니다.  
+- `BA`는 `Bundle Adjustment`의 줄임말입니다.  
