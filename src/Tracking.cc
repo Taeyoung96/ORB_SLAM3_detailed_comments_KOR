@@ -3729,8 +3729,7 @@ bool Tracking::Relocalization()
                         //^ 해당 index의 MapPoint는 CurrentFrame에서 NULL
                         mCurrentFrame.mvpMapPoints[j]=NULL;
                 }
-                // mCurrentFrame.mvpMapPoints 채워지게 됨.
-
+                
                 //^ Match된 MapPoint들로 graph를 이루고 graph optimization을 통해 camera pose를 구함.
                 //^ nGood : nInitialCorrespondences-nBad
                 //^ -> Initial vertex 갯수(nInitialCorrespondences)에서 optimization 결과 outlier(nBad)로 판명난 vertex 갯수를 뺀 값
