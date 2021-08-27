@@ -871,8 +871,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     {
     unique_lock<mutex> lock(MapPoint::mGlobalMutex);
 
+    //^ Construct Graph
     for(int i=0; i<N; i++)
     {
+        //^ CurrentFrame에서 Matching된 MapPoints들에 대해서...
         MapPoint* pMP = pFrame->mvpMapPoints[i];
         if(pMP)
         {
@@ -1031,6 +1033,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     const float chi2Stereo[4]={7.815,7.815,7.815, 7.815};
     const int its[4]={10,10,10,10};    
 
+    //^ Optimize
     int nBad=0;
     for(size_t it=0; it<4; it++)
     {
