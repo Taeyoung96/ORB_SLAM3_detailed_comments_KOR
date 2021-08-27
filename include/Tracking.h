@@ -219,6 +219,11 @@ protected:
 
     bool PredictStateIMU();
 
+    /* !
+    * @brief  : Tracking이 LOST 되었을 때, Relocalization 시켜주는 함수
+    * @param  : None
+    * @return : Boolean
+    */
     bool Relocalization();
 
     /* !
@@ -250,6 +255,12 @@ protected:
     bool TrackLocalMap();
 
     bool TrackLocalMap_old();   // 쓰이지 않음.
+    
+    /* !
+    * @brief  : Local Map Points와 Current Frame의 Map Points를 매칭시켜주는 함수
+    * @param  : None
+    * @return : None
+    */
     void SearchLocalPoints();
 
     bool NeedNewKeyFrame();

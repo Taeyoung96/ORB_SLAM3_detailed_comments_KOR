@@ -3281,7 +3281,11 @@ void Tracking::CreateNewKeyFrame()
     //cout  << "end creating new KF" << endl;
 }
 
-//!
+/* !
+* @brief  : Local Map Points와 Current Frame의 Map Points를 매칭시켜주는 함수
+* @param  : None
+* @return : None
+*/
 void Tracking::SearchLocalPoints()
 {
     // Do not search map points already matched
@@ -3586,7 +3590,12 @@ void Tracking::UpdateLocalKeyFrames()
     }
 }
 
-//!
+
+/* !
+* @brief  : Tracking이 LOST 되었을 때, Relocalization 시켜주는 함수
+* @param  : None
+* @return : Boolean
+*/
 bool Tracking::Relocalization()
 {
     Verbose::PrintMess("Starting relocalization", Verbose::VERBOSITY_NORMAL);
