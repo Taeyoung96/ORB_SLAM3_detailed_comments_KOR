@@ -2200,6 +2200,7 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
             rotHist[i].reserve(500);
         const float factor = 1.0f/HISTO_LENGTH;
 
+        //^ Current Frame Wolrd pose
         const cv::Mat Rcw = CurrentFrame.mTcw.rowRange(0,3).colRange(0,3);
         const cv::Mat tcw = CurrentFrame.mTcw.rowRange(0,3).col(3);
 
@@ -2221,7 +2222,10 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
                 if(!LastFrame.mvbOutlier[i])
                 {
                     // Project
-                    cv::Mat x3Dw = pMP->GetWorldPos();
+                    //^ LastFrame MapPoint world pose
+                    cv::Mat x3Dw = pMP->GetWorldPos()
+                    //^ LastFrame MapPoint world pose -> CurrentFrame에 대한 LastFrame MapPoint pose로 transformation
+                    //^ = LastFrame MapPoint를 CurrentFrame으로 projection
                     cv::Mat x3Dc = Rcw*x3Dw+tcw;
 
                     const float xc = x3Dc.at<float>(0);
@@ -2231,6 +2235,7 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
                     if(invzc<0)
                         continue;
 
+                    //^ CurrentFrame을 찍은 Camera의 f,c 고려한 points
                     cv::Point2f uv = CurrentFrame.mpCamera->project(x3Dc);
 
                     if(uv.x<CurrentFrame.mnMinX || uv.x>CurrentFrame.mnMaxX)
@@ -2256,6 +2261,7 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
                     if(vIndices2.empty())
                         continue;
 
+                    //^ LastFrame의 descriptor
                     const cv::Mat dMP = pMP->GetDescriptor();
 
                     int bestDist = 256;
@@ -2277,8 +2283,10 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
                                 continue;
                         }
 
+                        //^ CurrentFrame의 Descriptor
                         const cv::Mat &d = CurrentFrame.mDescriptors.row(i2);
 
+                        //^ LastFrame과 CurrentFrame의 descriptor 간 distance
                         const int dist = DescriptorDistance(dMP,d);
 
                         if(dist<bestDist)
@@ -2288,8 +2296,10 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
                         }
                     }
 
+                    //^ Best distance가 최대 threshold보다 작을 때(최대 margin)
                     if(bestDist<=TH_HIGH)
                     {
+                        //^ 매칭되어 해당 MapPoint는 CurrentFrame의 MapPoint가 된다.
                         CurrentFrame.mvpMapPoints[bestIdx2]=pMP;
                         nmatches++;
 

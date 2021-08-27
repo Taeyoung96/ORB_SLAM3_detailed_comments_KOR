@@ -75,9 +75,32 @@ public:
 
     void GrabImuData(const IMU::Point &imuMeasurement);
 
+    /* !
+    * @brief LocalMapping Class를 Pointer로 설정해주기 위한 함수
+    * @param None
+    * @return None
+    */
     void SetLocalMapper(LocalMapping* pLocalMapper);
+
+    /* !
+    * @brief LoopClosing Class를 Pointer로 설정해주기 위한 함수
+    * @param None
+    * @return None
+    */
     void SetLoopClosing(LoopClosing* pLoopClosing);
+
+    /* !
+    * @brief Viewer Class를 Pointer로 설정해주기 위한 함수
+    * @param None
+    * @return None
+    */
     void SetViewer(Viewer* pViewer);
+
+    /* !
+    * @brief Bool 타입을 변수를 통해 클래스 멤버 변수 'bStepByStep'의 상태를 바꿔주는 함수
+    * @param None
+    * @return None
+    */
     void SetStepByStep(bool bSet);
 
     // Load new settings
@@ -219,6 +242,11 @@ protected:
 
     bool PredictStateIMU();
 
+    /* !
+    * @brief  : Tracking이 LOST 되었을 때, Relocalization 시켜주는 함수
+    * @param  : None
+    * @return : Boolean
+    */
     bool Relocalization();
 
     /* !
@@ -250,6 +278,12 @@ protected:
     bool TrackLocalMap();
 
     bool TrackLocalMap_old();   // 쓰이지 않음.
+    
+    /* !
+    * @brief  : Local Map Points와 Current Frame의 Map Points를 매칭시켜주는 함수
+    * @param  : None
+    * @return : None
+    */
     void SearchLocalPoints();
 
     bool NeedNewKeyFrame();
