@@ -51,7 +51,7 @@ ORB SLAM3 코드를 볼 때, 코드에 대한 이해도를 빠르게 해줄 [ORB
 - OCamCalib Undistort [[Github](https://github.com/jj-tetraquark/ocamcalib_undistort)]  
     > Fish Eye Camera Calibration을 ROS를 활용하여 계산할 수 있는 Tool.    
 
-- C. Forster, L. Carlone, F. Dellaert and D. Scaramuzza, **"On-Manifold Preintegration for Real-Time Visual--Inertial Odometry,"** in IEEE Transactions on Robotics, vol. 33, no. 1, pp. 1-21, Feb. 2017 [[Paper](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=7557075)]  
+- C. Forster, L. Carlone, F. Dellaert and D. Scaramuzza, **"On-Manifold Preintegration for Real-Time Visual--Inertial Odometry,"** in IEEE Transactions on Robotics, vol. 33, no. 1, pp. 1-21, Feb. 2017 [[Paper](https://ieeexplore.ieee.org/document/7557075)]  
     > ORB SLAM3에서 IMU preintegration을 진행할 때 Reference가 된 논문.  
 
 ## Original Readme.md
