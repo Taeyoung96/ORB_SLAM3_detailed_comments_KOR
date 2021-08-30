@@ -390,204 +390,131 @@ void LocalMapping::MapPointCulling()
     //cout << "erase MP: " << borrar << endl;
 }
 
-/* !
-* @brief Current KeyFrame을 기준으로 인접한 Keyframe을 이용하여 triangulation을 수행하여 3D point를 생성하고
-*        Atlas-map과 current-map 객체에 3D point를 등록
-*        사용되는 위치: LocalMapping::Run();
-*/
 void LocalMapping::CreateNewMapPoints()
 {
-    // Stereo인 경우
-    int nn = 10; // nn은 새로운 MapPoint를 생성하기 위하여 가져올 인접 keyframe의 개수
-    
-    // Mono인경우
-    if(mbMonocular)
-        nn=20;   // nn은 새로운 MapPoint를 생성하기 위하여 가져올 인접 keyframe의 개수
-
     // Retrieve neighbor keyframes in covisibility graph
-    // covisibility 그래프에서 인접 키프레임 검색
-    //   - Stereo인 경우 10개의 인접 keyframe을 가져옴
-    //   - mono인   경우 20개의 인접 keyframe을 가져옴
-    //   - vector의 index가 낮을 수록 현재 keyframe과 가까운 위치에 존재함
+    int nn = 10;
+    // For stereo inertial case
+    if(mbMonocular)
+        nn=20;
     vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn);
 
-    // IMU인 경우
     if (mbInertial)
     {
-        KeyFrame* pKF = mpCurrentKeyFrame; // Current Keyframe을 획득
-        
-        // while문에서 for문 같이 종료조건을 위한 count        
+        KeyFrame* pKF = mpCurrentKeyFrame;
         int count=0;
-
-        // 반복 조건은 2개
-        //   1) 0부터 인접 keyframe의 개수만큼 수행됨
-        //   2) 인접 키프레임의 previousKeyFrame이 존재할 때 수행됨
         while((vpNeighKFs.size()<=nn)&&(pKF->mPrevKF)&&(count++<nn))
         {
-            // pKF의 이전 Previous KeyFrame을 탐색
             vector<KeyFrame*>::iterator it = std::find(vpNeighKFs.begin(), vpNeighKFs.end(), pKF->mPrevKF);
-            if(it==vpNeighKFs.end()) // 마지막 인접 keyframe에 도달했을 경우, previous-Keyframe을 추가함
+            if(it==vpNeighKFs.end())
                 vpNeighKFs.push_back(pKF->mPrevKF);
-            pKF = pKF->mPrevKF; // prevoius-keyframe의 포인터를 넘김
+            pKF = pKF->mPrevKF;
         }
     }
 
-    // ORBmatcher의 threshold를 설정 (0.6)
     float th = 0.6f;
 
-    ORBmatcher matcher(th,false); // ORBmatcher 생성
+    ORBmatcher matcher(th,false);
 
-    auto Rcw1 = mpCurrentKeyFrame->GetRotation_();          // CurrentKeyframe의 Rotatiom matrix를 가져옴(3x3)
-    auto Rwc1 = Rcw1.t();                                   // transpose를 수행
-    auto tcw1 = mpCurrentKeyFrame->GetTranslation_();       // CurrentKeyframe의 translate matrix를 가져옴(3x1)
-    cv::Matx44f Tcw1{Rcw1(0,0),Rcw1(0,1),Rcw1(0,2),tcw1(0), // Transforamtion matirx을 생성 (4x4)
+    auto Rcw1 = mpCurrentKeyFrame->GetRotation_();
+    auto Rwc1 = Rcw1.t();
+    auto tcw1 = mpCurrentKeyFrame->GetTranslation_();
+    cv::Matx44f Tcw1{Rcw1(0,0),Rcw1(0,1),Rcw1(0,2),tcw1(0),
                      Rcw1(1,0),Rcw1(1,1),Rcw1(1,2),tcw1(1),
                      Rcw1(2,0),Rcw1(2,1),Rcw1(2,2),tcw1(2),
                      0.f,0.f,0.f,1.f};
 
-    auto Ow1 = mpCurrentKeyFrame->GetCameraCenter_();       // Current Keyframe의 카메라 중심값을 가져옴
+    auto Ow1 = mpCurrentKeyFrame->GetCameraCenter_();
 
-    // Getting intrinsic parameters of camera
-    const float &fx1 = mpCurrentKeyFrame->fx;        // fx
-    const float &fy1 = mpCurrentKeyFrame->fy;        // fy
-    const float &cx1 = mpCurrentKeyFrame->cx;        // cx
-    const float &cy1 = mpCurrentKeyFrame->cy;        // cy
-    const float &invfx1 = mpCurrentKeyFrame->invfx;  // invfx = 1.0f/fx; (Frame.cc-167 lines or  검색)       
-    const float &invfy1 = mpCurrentKeyFrame->invfy;  // invfy = 1.0f/fy; (Frame.cc-168 lines or  검색)       
+    const float &fx1 = mpCurrentKeyFrame->fx;
+    const float &fy1 = mpCurrentKeyFrame->fy;
+    const float &cx1 = mpCurrentKeyFrame->cx;
+    const float &cy1 = mpCurrentKeyFrame->cy;
+    const float &invfx1 = mpCurrentKeyFrame->invfx;
+    const float &invfy1 = mpCurrentKeyFrame->invfy;
 
-    const float ratioFactor = 1.5f*mpCurrentKeyFrame->mfScaleFactor; // Scale Factor에 1.5를 곱해줌
+    const float ratioFactor = 1.5f*mpCurrentKeyFrame->mfScaleFactor;
 
     // Search matches with epipolar restriction and triangulate
-    // 에피폴라 제한이 있는 검색 일치 및 삼각 측량
-    for(size_t i=0; i<vpNeighKFs.size(); i++) // 인접 keyframe만큼 반복문 수행
+    for(size_t i=0; i<vpNeighKFs.size(); i++)
     {
-        if(i>0 && CheckNewKeyFrames()) // i가 0보다 작거나, 새로운 keyframe이 없으면 종료
+        if(i>0 && CheckNewKeyFrames())
             return;
 
-        KeyFrame* pKF2 = vpNeighKFs[i]; // 인접 keyframe을 가져옴
+        KeyFrame* pKF2 = vpNeighKFs[i];
 
-        // pCamera1: CurrentKeyframe
-        // pCamera2: Neighbor Keyframe
         GeometricCamera* pCamera1 = mpCurrentKeyFrame->mpCamera, *pCamera2 = pKF2->mpCamera;
 
         // Check first that baseline is not too short
-        // baseline의 길이가 짧은지 확인
-        auto Ow2 = pKF2->GetCameraCenter_();        // 인접한 Keyframe에 대한 CameraCenter  가져옴 (3x1 matrix)
-        auto vBaseline = Ow2-Ow1;                   // LastKeyframe(Ow1)과 인접한 Keyframe(Ow2)의 카메라 중심점 차이를 계산
-        const float baseline = cv::norm(vBaseline); // norm-함수를 이용하여 거리 계산
+        auto Ow2 = pKF2->GetCameraCenter_();
+        auto vBaseline = Ow2-Ow1;
+        const float baseline = cv::norm(vBaseline);
 
-        // Stereo, Stereo-IMU, RGBD인 경우, 즉 Mono 또는 Mono-IMU가 아닌경우
-        // 인접 keyframe의 baseline이 초기 Baseline인 보다 작으면, Skip
         if(!mbMonocular)
         {
-            // 인접 keyframe의 baseline이 초기 Baseline인 보다 작으면, Skip
-            if(baseline<pKF2->mb) 
+            if(baseline<pKF2->mb)
             continue;
         }
-        // Mono 또는 Mono-IMU인 경우
         else
         {
-            // pKF2에서 획득된 depth들의 중앙값을 가져옴.
-            // ComputeSceneMedianDepth function:
-            //    1. pKF2에서 획득된 point들의 depth값들을 오름차순으로 sorting을 진행
-            //    2. sorting된 depth에서 중앙값을 가져옴
             const float medianDepthKF2 = pKF2->ComputeSceneMedianDepth(2);
-
-            // Baseline을 depth 중앙값으로 나누어 BaselineDepth의 ratio을 계산
             const float ratioBaselineDepth = baseline/medianDepthKF2;
 
-            // ratioBaselineDepth 값이 0.01보다 작으면 skip
             if(ratioBaselineDepth<0.01)
                 continue;
         }
 
         // Compute Fundamental Matrix
-        // 인접 keyframe과 lastkeyframe간의 fundamental matrix를 계산
-        // 결과적으로 다음식을 만족하는 F12를 구하게 됨
-        // mpCurrentKeyFrame.point.t() * F12 * pKF2.point = 0
         auto F12 = ComputeF12_(mpCurrentKeyFrame,pKF2);
 
         // Search matches that fullfil epipolar constraint
-        // 에피폴라 제약조건을 이용한 매칭 탐색
         vector<pair<size_t,size_t> > vMatchedIndices;
+        bool bCoarse = mbInertial &&
+                ((!mpCurrentKeyFrame->GetMap()->GetIniertialBA2() && mpCurrentKeyFrame->GetMap()->GetIniertialBA1())||
+                 mpTracker->mState==Tracking::RECENTLY_LOST);
 
-        // 1.1 + IMU
-        // 1.2 + GetIniertialBA2(): LocalMapping.cc 202번 line 참조
-        //                       ->LocalMapping 수행중 current-keyframe과 previous-keyframe의 시간 차이가 15 미만이면 true
-        // 1.3 + GetIniertialBA1(): LocalMapping 수행중 current-keyframe과 previous-keyframe의 시간 차이가  5 미만이면 true
-        //  or
-        // 2. + Tracking을 실패 했을 경우
-        bool bCoarse = mbInertial                                           
-                      && ((!mpCurrentKeyFrame->GetMap()->GetIniertialBA2()  
-                      &&    mpCurrentKeyFrame->GetMap()->GetIniertialBA1())
-                      ||    mpTracker->mState==Tracking::RECENTLY_LOST);
-
-        // SearchForTriangulation(): ORBmatcher.cc의 1208번 line의 함수
-        // Fundamental matrix를 이용하여 tracking에 실패한 point들에 대하여 매칭정보를 추가적으로 탐색
         matcher.SearchForTriangulation_(mpCurrentKeyFrame,pKF2,F12,vMatchedIndices,false,bCoarse);
 
-        auto Rcw2 = pKF2->GetRotation_();                        // PrevKeyframe의 Rotatiom matrix를 가져옴(3x3)
-        auto Rwc2 = Rcw2.t();                                    // transpose를 수행
-        auto tcw2 = pKF2->GetTranslation_();                     // PrevKeyframe의 translate matrix를 가져옴(3x1)
-        cv::Matx44f Tcw2{Rcw2(0,0),Rcw2(0,1),Rcw2(0,2),tcw2(0),  // Transforamtion matirx을 생성 (4x4) 
-                         Rcw2(1,0),Rcw2(1,1),Rcw2(1,2),tcw2(1),  
-                         Rcw2(2,0),Rcw2(2,1),Rcw2(2,2),tcw2(2),  
+        auto Rcw2 = pKF2->GetRotation_();
+        auto Rwc2 = Rcw2.t();
+        auto tcw2 = pKF2->GetTranslation_();
+        cv::Matx44f Tcw2{Rcw2(0,0),Rcw2(0,1),Rcw2(0,2),tcw2(0),
+                         Rcw2(1,0),Rcw2(1,1),Rcw2(1,2),tcw2(1),
+                         Rcw2(2,0),Rcw2(2,1),Rcw2(2,2),tcw2(2),
                          0.f,0.f,0.f,1.f};
 
-        // camera parameter 가져옴
-        const float &fx2 = pKF2->fx;        // fx
-        const float &fy2 = pKF2->fy;        // fy
-        const float &cx2 = pKF2->cx;        // cx
-        const float &cy2 = pKF2->cy;        // cy
-        const float &invfx2 = pKF2->invfx;  // invfx = 1.0f/fx; (Frame.cc-167 lines or  검색)       
-        const float &invfy2 = pKF2->invfy;  // invfy = 1.0f/fy; (Frame.cc-168 lines or  검색)       
+        const float &fx2 = pKF2->fx;
+        const float &fy2 = pKF2->fy;
+        const float &cx2 = pKF2->cx;
+        const float &cy2 = pKF2->cy;
+        const float &invfx2 = pKF2->invfx;
+        const float &invfy2 = pKF2->invfy;
 
         // Triangulate each match
-        const int nmatches = vMatchedIndices.size(); // fundamental matrix를 이용하여 tracking에 실패한 point들을 재추적 정보
+        const int nmatches = vMatchedIndices.size();
         for(int ikp=0; ikp<nmatches; ikp++)
         {
-            const int &idx1 = vMatchedIndices[ikp].first;  // Prev KF의 point id
-            const int &idx2 = vMatchedIndices[ikp].second; // Curr KF의 point id
+            const int &idx1 = vMatchedIndices[ikp].first;
+            const int &idx2 = vMatchedIndices[ikp].second;
 
-            // Curr KF의 matching point가 -1 인경우
-            //   true)  Curr KF의 idx1의 KeysUn 값을 가져옴
-            //   false) Curr KF의 matching point가 idx1보다 작은경우
-            //              true) Curr KF의 idx1의 KeysUn 값을 가져옴
-            //             false) Curr KF의 right->(idx1-currKF.NLeft) 의 KeysUn 값을 가져옴 // 어떤 의미인지 몰르겠음
-            // mvKeysRight는 fisheye에서만 사용되는 변수 (//KeyPoints in the right image (for stereo fisheye, coordinates are needed))
             const cv::KeyPoint &kp1 = (mpCurrentKeyFrame -> NLeft == -1) ? mpCurrentKeyFrame->mvKeysUn[idx1]
                                                                          : (idx1 < mpCurrentKeyFrame -> NLeft) ? mpCurrentKeyFrame -> mvKeys[idx1]
-            
                                                                                                                : mpCurrentKeyFrame -> mvKeysRight[idx1 - mpCurrentKeyFrame -> NLeft];
-            // mvuRight: negative value for monocular points
-            // current KF의 negative value 값을 가져옴
-            const float kp1_ur=mpCurrentKeyFrame->mvuRight[idx1]; // Right가 모든 센서에서 사용되는 것 같음 (확인필요)
-            
-            // fisheye가 아니고, negative value가 존재하는 경우
-            bool bStereo1 = (!mpCurrentKeyFrame->mpCamera2 && kp1_ur>=0); 
+            const float kp1_ur=mpCurrentKeyFrame->mvuRight[idx1];
+            bool bStereo1 = (!mpCurrentKeyFrame->mpCamera2 && kp1_ur>=0);
             const bool bRight1 = (mpCurrentKeyFrame -> NLeft == -1 || idx1 < mpCurrentKeyFrame -> NLeft) ? false
                                                                                : true;
-            // Neighbor KF의 matching point가 -1 인경우
-            //   true)  Neighbor KF의 idx1의 KeysUn 값을 가져옴
-            //   false) Neighbor KF의 matching point가 idx2보다 작은경우
-            //              true) Neighbor KF의 idx2의 KeysUn 값을 가져옴
-            //             false) Neighbor KF의 right->(idx2-NeighborKF.NLeft) 의 KeysUn 값을 가져옴 // 어떤 의미인지 몰르겠음
-            // (return) = (조건문) ? (true) : (false)
+
             const cv::KeyPoint &kp2 = (pKF2 -> NLeft == -1) ? pKF2->mvKeysUn[idx2]
                                                             : (idx2 < pKF2 -> NLeft) ? pKF2 -> mvKeys[idx2]
                                                                                      : pKF2 -> mvKeysRight[idx2 - pKF2 -> NLeft];
 
-            // mvuRight: negative value for monocular points
-            // Neighbor KF의 negative value 값을 가져옴
             const float kp2_ur = pKF2->mvuRight[idx2];
-            
-            // fisheye가 아니고, negative value가 존재하는 경우
             bool bStereo2 = (!pKF2->mpCamera2 && kp2_ur>=0);
             const bool bRight2 = (pKF2 -> NLeft == -1 || idx2 < pKF2 -> NLeft) ? false
                                                                                : true;
 
-            // Fisheye 경우
-            if(mpCurrentKeyFrame->mpCamera2 && pKF2->mpCamera2){          
+            if(mpCurrentKeyFrame->mpCamera2 && pKF2->mpCamera2){
                 if(bRight1 && bRight2){
                     Rcw1 = mpCurrentKeyFrame->GetRightRotation_();
                     Rwc1 = Rcw1.t();
@@ -655,53 +582,30 @@ void LocalMapping::CreateNewMapPoints()
             }
 
             // Check parallax between rays
-            // kp1.pt (2x1)를 3차원 값으로 unproject (Curr KF)
-            // kp2.pt (2x1)를 3차원 값으로 unproject (Neighbor KF)
-            // unprojectMat_()의 출력 값은 (3x1)로 3번째 row값(z)는 1으로 고정
-            // unprojectMat_()는 3d point에 대한 ray 정보를 계산
-            auto xn1 = pCamera1->unprojectMat_(kp1.pt); // (X, Y, 1)
+            auto xn1 = pCamera1->unprojectMat_(kp1.pt);
             auto xn2 = pCamera2->unprojectMat_(kp2.pt);
 
-            auto ray1 = Rwc1*xn1; // world 좌표계로 변환
-            auto ray2 = Rwc2*xn2; // world 좌표계로 변환
-
-            // 두 ray의 cos(theta) 값을 계산
+            auto ray1 = Rwc1*xn1;
+            auto ray2 = Rwc2*xn2;
             const float cosParallaxRays = ray1.dot(ray2)/(cv::norm(ray1)*cv::norm(ray2));
 
-            float cosParallaxStereo = cosParallaxRays+1;  // cos(theata) 결과를 양수화
-            float cosParallaxStereo1 = cosParallaxStereo; // 초기값 대입
-            float cosParallaxStereo2 = cosParallaxStereo; // 초기값 대입
+            float cosParallaxStereo = cosParallaxRays+1;
+            float cosParallaxStereo1 = cosParallaxStereo;
+            float cosParallaxStereo2 = cosParallaxStereo;
 
-            // bStereo1: Curr KF가 fisheye가 아니고, negative value가 존재하는 경우
-            // 카메라 원점과 3D point간의 cos 값 계산
-            // mb값은 고정
-            // depth값이 클수록 atan2의 값은 더 커짐
-            // 그러므로 depth값이 클수록 cos값은 더 작아짐
             if(bStereo1)
                 cosParallaxStereo1 = cos(2*atan2(mpCurrentKeyFrame->mb/2,mpCurrentKeyFrame->mvDepth[idx1]));
-
-            // bStereo2: Neigbor KF가 fisheyeCreateNewMapPoints가 아니고, negative value가 존재하는 경우
-            // 카메라 원점과 3D point간의 cos 값 계산
             else if(bStereo2)
                 cosParallaxStereo2 = cos(2*atan2(pKF2->mb/2,pKF2->mvDepth[idx2]));
 
-            // 두 값중 작은 값을 반환
-            // 두 값중 더 작은 값이, 카메라로부터 더 멀리 떨어져 있는 것을 의미함.
-            // stereo가 아니면, cosParallaxStereo1, cosParallaxStereo2가 동일
-            cosParallaxStereo = min(cosParallaxStereo1,cosParallaxStereo2);       
+            cosParallaxStereo = min(cosParallaxStereo1,cosParallaxStereo2);
 
-            cv::Matx31f x3D; // Triangulation 결과 값에 대한 변수 (3x1, XYZ)
-            bool bEstimated = false; // Triangulation이 성공했는지 여부
-                                     // 성공했다면 (true)가 되고, reprojection error를 비교하고 -> 맵포인트를 추가하는 순서도로 작동
-            if(cosParallaxRays<cosParallaxStereo 
-               && cosParallaxRays>0                                                // rotation이 심하지 않은 경우
-               && (bStereo1 || bStereo2 || (cosParallaxRays<0.9998 && mbInertial)  // bStereo1, bStereo2는 stereo를 의미(fisheye 아님)
-               || (cosParallaxRays<0.9998 && !mbInertial)))                        // cosParallaxRay < 0.9998 : ray들이 평행하지 않음을 의미(평행하면 삼각측량이 부정확) 
+            cv::Matx31f x3D;
+            bool bEstimated = false;
+            if(cosParallaxRays<cosParallaxStereo && cosParallaxRays>0 && (bStereo1 || bStereo2 ||
+               (cosParallaxRays<0.9998 && mbInertial) || (cosParallaxRays<0.9998 && !mbInertial)))
             {
-                // DLT를 이용한 선형 삼각측량 방법 
-                // Cyrill Stachniss교수님 강의: https://www.youtube.com/watch?v=3NcQbZu6xt8                
-                // https://imkaywu.github.io/blog/2017/07/triangulation/                
-                // https://www.youtube.com/watch?v=oFZQykvEw14
+                // Linear Triangulation Method
                 cv::Matx14f A_r0 = xn1(0) * Tcw1.row(2) - Tcw1.row(0);
                 cv::Matx14f A_r1 = xn1(1) * Tcw1.row(2) - Tcw1.row(1);
                 cv::Matx14f A_r2 = xn2(0) * Tcw2.row(2) - Tcw2.row(0);
@@ -712,18 +616,16 @@ void LocalMapping::CreateNewMapPoints()
                               A_r3(0), A_r3(1), A_r3(2), A_r3(3)};
 
                 cv::Matx44f u,vt;
-                cv::Matx41f w;                
-                cv::SVD::compute(A,w,u,vt,cv::SVD::MODIFY_A| cv::SVD::FULL_UV); // SVD 계산 (cv::SVD::FULL_UV는 u와 vt가 직교행렬 생성에 대한 flag)
+                cv::Matx41f w;
+                cv::SVD::compute(A,w,u,vt,cv::SVD::MODIFY_A| cv::SVD::FULL_UV);
 
-                cv::Matx41f x3D_h = vt.row(3).t(); // 3차원 x
+                cv::Matx41f x3D_h = vt.row(3).t();
 
                 if(x3D_h(3)==0)
                     continue;
 
                 // Euclidean coordinates
-                x3D = x3D_h.get_minor<3,1>(0,0) / x3D_h(3); // [X Y Z 1]
-                // 위에랑 아래랑 같은 의미 코드 (opencv 버전에 따라서 위에 것이 컴파일이 안될 수도 있는데, 아래로 수정하면됨)
-                //x3D = cv::Matx31f(x3D_h.get_minor<3,1>(0,0)(0) / x3D_h(3), x3D_h.get_minor<3,1>(0,0)(1) /  x3D_h(3), x3D_h.get_minor<3,1>(0,0)(2) / x3D_h(3));
+                x3D = x3D_h.get_minor<3,1>(0,0) / x3D_h(3);
                 bEstimated = true;
 
             }
@@ -742,40 +644,36 @@ void LocalMapping::CreateNewMapPoints()
                 continue; //No stereo and very low parallax
             }
 
-            cv::Matx13f x3Dt = x3D.t(); // 3D point에 대한 transpose
+            cv::Matx13f x3Dt = x3D.t();
 
             if(!bEstimated) continue;
             //Check triangulation in front of cameras
-            // 측량값이 카메라 앞쪽에 생성됬는지 아닌지 확인 (Curr KF)
-            float z1 = Rcw1.row(2).dot(x3Dt)+tcw1(2); // camera coordinate기준으로 z값을 계산 (양수값이 되어야함)
-            if(z1<=0) // 음수면 skip
+            float z1 = Rcw1.row(2).dot(x3Dt)+tcw1(2);
+            if(z1<=0)
                 continue;
 
-            // 측량값이 카메라 앞쪽에 생성됬는지 아닌지 확인 (Neighbor KF)
-            float z2 = Rcw2.row(2).dot(x3Dt)+tcw2(2); // camera coordinate기준으로 z값을 계산 (양수값이 되어야함)
-            if(z2<=0) // 음수면 skip
+            float z2 = Rcw2.row(2).dot(x3Dt)+tcw2(2);
+            if(z2<=0)
                 continue;
 
-            // Check reprojection error in first keyframe            
-            // Keyframe 에서 특징점들을 추출할 때, 생성되는 sigma or octvae값을 가지고있음
+            //Check reprojection error in first keyframe
             const float &sigmaSquare1 = mpCurrentKeyFrame->mvLevelSigma2[kp1.octave];
-            const float x1 = Rcw1.row(0).dot(x3Dt)+tcw1(0); // Curr KF 좌표계변환
-            const float y1 = Rcw1.row(1).dot(x3Dt)+tcw1(1); // Curr KF 좌표계변환
-            const float invz1 = 1.0/z1; // inverse
+            const float x1 = Rcw1.row(0).dot(x3Dt)+tcw1(0);
+            const float y1 = Rcw1.row(1).dot(x3Dt)+tcw1(1);
+            const float invz1 = 1.0/z1;
 
-            if(!bStereo1) // stereo가 아닌 경우
+            if(!bStereo1)
             {
-                cv::Point2f uv1 = pCamera1->project(cv::Point3f(x1,y1,z1)); // Curr KF - image에 투영
-                float errX1 = uv1.x - kp1.pt.x; // 오차 계산
-                float errY1 = uv1.y - kp1.pt.y; // 오차 계산
+                cv::Point2f uv1 = pCamera1->project(cv::Point3f(x1,y1,z1));
+                float errX1 = uv1.x - kp1.pt.x;
+                float errY1 = uv1.y - kp1.pt.y;
 
-                if((errX1*errX1+errY1*errY1)>5.991*sigmaSquare1) // 에러가 너무 크면 skip
+                if((errX1*errX1+errY1*errY1)>5.991*sigmaSquare1)
                     continue;
 
             }
-            else // stereo 인 경우
+            else
             {
-                // 똑같이 오차 계산
                 float u1 = fx1*x1*invz1+cx1;
                 float u1_r = u1 - mpCurrentKeyFrame->mbf*invz1;
                 float v1 = fy1*y1*invz1+cy1;
@@ -787,8 +685,6 @@ void LocalMapping::CreateNewMapPoints()
             }
 
             //Check reprojection error in second keyframe
-            // curr KF의 오차 계산과 동일함
-            // KF2는 neighbor KF를 뜻함
             const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave];
             const float x2 = Rcw2.row(0).dot(x3Dt)+tcw2(0);
             const float y2 = Rcw2.row(1).dot(x3Dt)+tcw2(1);
@@ -814,46 +710,40 @@ void LocalMapping::CreateNewMapPoints()
             }
 
             //Check scale consistency
-            auto normal1 = x3D-Ow1;           // camera center of the curr KF과 3D point의 벡터 계산
-            float dist1 = cv::norm(normal1);  // camera center of the curr KF과 3D point의 거리 계산
+            auto normal1 = x3D-Ow1;
+            float dist1 = cv::norm(normal1);
 
-            auto normal2 = x3D-Ow2;           // camera center of the neighbor KF과 3D point의 벡터 계산
-            float dist2 = cv::norm(normal2);  // camera center of the neighbor KF과 3D point의 벡터 계산
+            auto normal2 = x3D-Ow2;
+            float dist2 = cv::norm(normal2);
 
-            if(dist1==0 || dist2==0)          // 둘중 하나라도 값이 0이면 skip
+            if(dist1==0 || dist2==0)
                 continue;
 
-            // mbFarPoints는 bool변수
-            // mbFarPoints는 .yaml파일에서 "thFarPoints" 파라미터가 존재하는 경우 true로 설정 / 아니면 false
-            // thFarPoints는 일부 .yaml파일에만 존재(example. TUM_512_ourdoors.yaml)
-            if(mbFarPoints && (dist1>=mThFarPoints||dist2>=mThFarPoints)) // 거리 값이 mThFarPoints보다 크면 skip
+            if(mbFarPoints && (dist1>=mThFarPoints||dist2>=mThFarPoints))
                 continue;
 
-            const float ratioDist = dist2/dist1; // 거리 비율 계산
-            const float ratioOctave = mpCurrentKeyFrame->mvScaleFactors[kp1.octave]/pKF2->mvScaleFactors[kp2.octave]; // ??
+            const float ratioDist = dist2/dist1;
+            const float ratioOctave = mpCurrentKeyFrame->mvScaleFactors[kp1.octave]/pKF2->mvScaleFactors[kp2.octave];
 
-            if(ratioDist*ratioFactor<ratioOctave || ratioDist>ratioOctave*ratioFactor) // (거리 비율 * 1.5)이 ratioOctave 보다 작으면 skip
-                continue;                                                              // (거리 비율)이 (ratioOctave * 1.5) 보다 작으면 skip
+            if(ratioDist*ratioFactor<ratioOctave || ratioDist>ratioOctave*ratioFactor)
+                continue;
 
             // Triangulation is succesfull
-            // 지금까지 skip되지 않고 조건을 만족하면, 삼각측량 값을 3D mappint로 사용
             cv::Mat x3D_(x3D);
             MapPoint* pMP = new MapPoint(x3D_,mpCurrentKeyFrame,mpAtlas->GetCurrentMap());
 
-            pMP->AddObservation(mpCurrentKeyFrame,idx1); // observation 값 추가 // 기존에 존재하는 map-point인지, 새로운 map-point인지 점검과정이 포함됨
-            pMP->AddObservation(pKF2,idx2);              // observation 값 추가 // 기존에 존재하는 map-point인지, 새로운 map-point인지 점검과정이 포함됨
+            pMP->AddObservation(mpCurrentKeyFrame,idx1);            
+            pMP->AddObservation(pKF2,idx2);
 
-            mpCurrentKeyFrame->AddMapPoint(pMP,idx1);    // Map point 추가
-            pKF2->AddMapPoint(pMP,idx2);                 // Map point 추가
+            mpCurrentKeyFrame->AddMapPoint(pMP,idx1);
+            pKF2->AddMapPoint(pMP,idx2);
 
-            pMP->ComputeDistinctiveDescriptors();        // Descriptor 계산
-                                                         // Map-point는 여러 KF에서 관찰 될 수 있지만,
-                                                         // 이중 가장 대표적인 descirptor를 사용하기 위해서, 갱신 또는 유지하는 작업이 포함됨
+            pMP->ComputeDistinctiveDescriptors();
 
-            pMP->UpdateNormalAndDepth();                 // 3D점에서 카메라까지의 normal vector와 depth값을 update
+            pMP->UpdateNormalAndDepth();
 
-            mpAtlas->AddMapPoint(pMP);                   // Map point 추가 (AtlasMap)
-            mlpRecentAddedMapPoints.push_back(pMP);      // Map point 추가 (RecentMap)
+            mpAtlas->AddMapPoint(pMP);
+            mlpRecentAddedMapPoints.push_back(pMP);
         }
     }
 }
