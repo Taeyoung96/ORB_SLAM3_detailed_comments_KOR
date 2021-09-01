@@ -3076,60 +3076,86 @@ bool Tracking::TrackLocalMap()
 
 bool Tracking::NeedNewKeyFrame()
 {
+    // Monocular-Inertial 모드거나 Stereo-Inertial 모드 그리고 Atlas에 Current Map에서 IMU 초기화가 되어있지 않을 때
     if(((mSensor == System::IMU_MONOCULAR) || (mSensor == System::IMU_STEREO)) && !mpAtlas->GetCurrentMap()->isImuInitialized())
     {
+        // Monocular-Inertial 모드이고, 현재 Frame의 Timestamp와 Last KeyFrame의 Timestamp의 차이가 0.25이상일 경우,
+        // Timestamp의 단위는 Unix Time (참고자료 : https://perfectacle.github.io/2018/09/25/unix-timestamp/)
         if (mSensor == System::IMU_MONOCULAR && (mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.25)
-            return true;
+            return true;    // 새로운 KeyFrame이 필요하다고 판단
+        
+        // Stereo-Inertial 모드이고, 현재 Frame의 Timestamp와 Last KeyFrame의 Timestamp의 차이가 0.25이상일 경우,
         else if (mSensor == System::IMU_STEREO && (mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.25)
-            return true;
-        else
-            return false;
+            return true;    // 새로운 KeyFrame이 필요하다고 판단
+        
+        else    // Timestamp 차이가 0.25보다 작을 경우
+            return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
     }
 
-    if(mbOnlyTracking)
-        return false;
+    if(mbOnlyTracking)  // Localization mode로 실행할 경우
+        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
 
     // If Local Mapping is freezed by a Loop Closure do not insert keyframes
+    // Loop Closure 때문에 Local Mapping을 수행하지 않을경우, KeyFrame을 넣지 않는다.
     if(mpLocalMapper->isStopped() || mpLocalMapper->stopRequested())
     {
-        return false;
+        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
     }
 
     // Return false if IMU is initialazing
+    // LocalMapping 포인터를 통해 IMU가 초기화가 진행중일 때
     if (mpLocalMapper->IsInitializing())
-        return false;
+        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
+    
+    // KeyFramesInMap을 통해 Current Map에서 KeyFrame의 갯수를 가져온다.
     const int nKFs = mpAtlas->KeyFramesInMap();
 
     // Do not insert keyframes if not enough frames have passed from last relocalisation
+    // 이전 Relocalization때 충분한 프레임이 전달되지 않은 경우
     if(mCurrentFrame.mnId<mnLastRelocFrameId+mMaxFrames && nKFs>mMaxFrames)
     {
-        return false;
+        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
     }
 
     // Tracked MapPoints in the reference keyframe
-    int nMinObs = 3;
-    if(nKFs<=2)
-        nMinObs=2;
+    int nMinObs = 3;    // Observation의 최소값 선언
+
+    if(nKFs<=2) // 예외처리) KeyFrame의 갯수가 2이하 일 때
+        nMinObs=2;  // Observiation의 최소값 변경
+    
+    // Reference Key Frame에서 Map Point가 얼마나 관찰되고 있는지 판단하고 그 Map Point의 갯수를 nRefMatches에 대입
+    // 추후 condition2에서 nRefMatches 변수를 사용
     int nRefMatches = mpReferenceKF->TrackedMapPoints(nMinObs);
 
     // Local Mapping accept keyframes?
+    // LocalMapper에서 mbAcceptKeyFrames 변수 상태를 반환
+    // mbAcceptKeyFrames 변수는 SetAcceptKeyFrames() 함수를 통해 바뀌는데, 
+    // LocalMapping::Run()함수가 처음 진행될 때 false, 다 끝나면 true
+    // bLocalMappingIdle 변수를 통해 Local Mapping이 진행되고 있는지 아닌지를 판단
     bool bLocalMappingIdle = mpLocalMapper->AcceptKeyFrames();
 
     // Check how many "close" points are being tracked and how many could be potentially created.
+    // Tracking되고 있는 Point들이 얼마나 가까운지 Check
     int nNonTrackedClose = 0;
     int nTrackedClose= 0;
 
+    // Stereo 모드거나, Stereo-Inertial 모드일 때
     if(mSensor!=System::MONOCULAR && mSensor!=System::IMU_MONOCULAR)
     {
+        // Current Frame의 KeyPoint의 갯수를 가져온다.
+        // Fisheye stereo 카메라일 때는 Nleft값을 가져온다. (왼쪽에서 보이는 KeyPoint의 갯수)
         int N = (mCurrentFrame.Nleft == -1) ? mCurrentFrame.N : mCurrentFrame.Nleft;
         for(int i =0; i<N; i++)
         {
+            // mThDepth는 ParseCamParamFile()함수에서 그 값이 정해짐
+            // Key Point 하나의 거리값이 0 이상, Thereshold값 미만일 때
             if(mCurrentFrame.mvDepth[i]>0 && mCurrentFrame.mvDepth[i]<mThDepth)
             {
+                // Map Point가 값이 있고, Outlier가 아닐 때
                 if(mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
-                    nTrackedClose++;
-                else
-                    nNonTrackedClose++;
+                    nTrackedClose++;    // nTrackedClose 변수 1 중가
+                else    // 그렇지 않다면   
+                    nNonTrackedClose++; // nNonTrackedClsoe 변수 1 증가
 
             }
         }
@@ -3137,217 +3163,269 @@ bool Tracking::NeedNewKeyFrame()
 
     bool bNeedToInsertClose;
     bNeedToInsertClose = (nTrackedClose<100) && (nNonTrackedClose>70);
+    // nTrackedClose가 100미만, nNonTrackedClose가 70 초과일때 (Tracked이 되고 있는 Point가 가깝지 않을 때)
 
     // Thresholds
+    // 모드에 따라 Threshold 값을 변경
     float thRefRatio = 0.75f;
-    if(nKFs<2)
-        thRefRatio = 0.4f;
+    if(nKFs<2)  // 예외처리) KeyFrame의 갯수가 2이하 일 때
+        thRefRatio = 0.4f;  
 
-    if(mSensor==System::MONOCULAR)
+    if(mSensor==System::MONOCULAR)  // Monocular mode 일 때
         thRefRatio = 0.9f;
 
-    if(mpCamera2) thRefRatio = 0.75f;
+    if(mpCamera2) thRefRatio = 0.75f;   // Stereo Fisheye 카메라 일 때
 
-    if(mSensor==System::IMU_MONOCULAR)
+    if(mSensor==System::IMU_MONOCULAR)  // Monocular-Inertial mode 일 때
     {
         if(mnMatchesInliers>350) // Points tracked from the local map
+        // mnMatchesInliers는 TrackLocalMap()함수를 통해 값이 바뀜
             thRefRatio = 0.75f;
         else
             thRefRatio = 0.90f;
     }
 
+    // Condition을 구분하는 것은 "ORB-SLAM" 논문 E. New Keyframe Decision 참고
+    // c1a, c1b 동일 c2는 살짝 변형
+
     // Condition 1a: More than "MaxFrames" have passed from last keyframe insertion
+    // Condition 1a: LastKeyFrame Id와 Max Frame(FPS)의 합보다 Current Frame이 더 클 때 (이미지쪽에서 Tracking이 잘 되지 않을 때)
     const bool c1a = mCurrentFrame.mnId>=mnLastKeyFrameId+mMaxFrames;
+
     // Condition 1b: More than "MinFrames" have passed and Local Mapping is idle
+    // Condition 1b: mMinFrames는 0으로 초기화, CurrentFrame ID가 Last KeyFrame ID보다 클 때, 그리고 LocalMapping이 진행 중일때
     const bool c1b = ((mCurrentFrame.mnId>=mnLastKeyFrameId+mMinFrames) && bLocalMappingIdle);
-    //Condition 1c: tracking is weak
+
+    // Condition 1c: tracking is weak
+    // Condition 1c: Stereo  모드일 때, Tracking이 약한지 판단
+    // TrackLocalMap() 함수를 통해 mnMatchesInliers값을 구하고, Reference Frame에서 관찰되고 있는 Map point 갯수와 비교
+    // bNeedToInsertClose 변수를 통해 Tracking이 제대로 되고 있는지 판단
     const bool c1c = mSensor!=System::MONOCULAR && mSensor!=System::IMU_MONOCULAR && mSensor!=System::IMU_STEREO && (mnMatchesInliers<nRefMatches*0.25 || bNeedToInsertClose) ;
+    
     // Condition 2: Few tracked points compared to reference keyframe. Lots of visual odometry compared to map matches.
+    // Condition 2: Referecne Key Frame과 비교했을 때 Tracked point가 적은지 판단, bNeedToInsertClose 변수를 통해 Tracking이 제대로 되고 있는지 판단
     const bool c2 = (((mnMatchesInliers<nRefMatches*thRefRatio || bNeedToInsertClose)) && mnMatchesInliers>15);
 
     // Temporal condition for Inertial cases
+    // IMU를 사용할 때 Case들
     bool c3 = false;
     if(mpLastKeyFrame)
     {
-        if (mSensor==System::IMU_MONOCULAR)
+        if (mSensor==System::IMU_MONOCULAR) // Monocular-Inertial 모드일 때
         {
-            if ((mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.5)
+            if ((mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.5) 
+            // CurrentFrame의 Timestamp와 Last KeyFrame의 Timestamp 차이가 0.5 이상일 때
                 c3 = true;
         }
-        else if (mSensor==System::IMU_STEREO)
+        else if (mSensor==System::IMU_STEREO)   // Stereo-Inertial 모드일 때
         {
             if ((mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.5)
+            // CurrentFrame의 Timestamp와 Last KeyFrame의 Timestamp 차이가 0.5 이상일 때
                 c3 = true;
         }
     }
 
     bool c4 = false;
+    // TrackLocalMap() 함수를 통해 mnMatchesInliers값을 구하고, 그 값이 15보다 크고, 75보다 작은 경우이거나 상태가 RECENTLY_LOST인 경우
+    // 그리고 Monocular-Inertial mode일 경우
     if ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && ((mSensor == System::IMU_MONOCULAR))) // MODIFICATION_2, originally ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && ((mSensor == System::IMU_MONOCULAR)))
         c4=true;
     else
         c4=false;
 
+    // c1a,c1b,c1c 중 하나라도 true이고, c2가 true인 경우
+    // c3가 true인 경우
+    // c4가 true인 경우
     if(((c1a||c1b||c1c) && c2)||c3 ||c4)
     {
         // If the mapping accepts keyframes, insert keyframe.
         // Otherwise send a signal to interrupt BA
-        if(bLocalMappingIdle)
+        // Mapping이 KeyFrame을 허락하면, KeyFrame을 추가로 넣는다.
+        // 그렇지 않으면 BA를 방해
+        if(bLocalMappingIdle)   // LocallMapping이 진행 중인 경우
         {
-            return true;
+            return true;    // 새로운 KeyFrame이 필요하다고 판단
         }
-        else
+        else    // Mapping이 진행 중이지 않을 경우
         {
-            mpLocalMapper->InterruptBA();
+            mpLocalMapper->InterruptBA();   // BA를 방해
+
+            // Stereo 모드, Stereo-Inertial 모드일 경우
             if(mSensor!=System::MONOCULAR  && mSensor!=System::IMU_MONOCULAR)
             {
-                if(mpLocalMapper->KeyframesInQueue()<3)
-                    return true;
-                else
-                    return false;
+                if(mpLocalMapper->KeyframesInQueue()<3) // LocalMapping 쪽으로 전달된 새로운 Key Frame의 갯수가 3 미만일 경우
+                    return true;  // 새로운 KeyFrame이 필요하다고 판단
+                
+                else    // LocalMapping 쪽으로 전달된 새로운 Key Frame의 갯수가 3 이상일 경우
+                    return false;  // 새로운 KeyFrame이 필요하지 않다고 판단
             }
+
+            // Monocular 모드, Monocular-Inertial 모드일 경우
             else
-                return false;
+                return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
         }
     }
+
+    // 복잡한 조건문을 충족시키지 못한 경우
     else
-        return false;
+        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
 }
 
 void Tracking::CreateNewKeyFrame()
 {
-    if(mpLocalMapper->IsInitializing())
+    if(mpLocalMapper->IsInitializing()) // Local Mapping에서 초기화가 일어나면 Key Frame을 만들지 않는다.
         return;
 
-    if(!mpLocalMapper->SetNotStop(true))
+    if(!mpLocalMapper->SetNotStop(true)) // Local Mapping이 Stop된 경우 Key Frame을 만들지 않는다.
         return;
 
     KeyFrame* pKF = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
+    // Current Frame, Atlas에서 Current Map, 그리고 BoW를 활용한 KeyFrame DB를 활용하여 KeyFrame을 pointer로 선언
 
-    if(mpAtlas->isImuInitialized())
-        pKF->bImu = true;
+    if(mpAtlas->isImuInitialized()) // Atlas에 IMU가 초기화가 되어있다면
+        pKF->bImu = true;   // KeyFrame의 IMU flag를 true로 선언
 
-    pKF->SetNewBias(mCurrentFrame.mImuBias);
-    mpReferenceKF = pKF;
-    mCurrentFrame.mpReferenceKF = pKF;
+    pKF->SetNewBias(mCurrentFrame.mImuBias);    // CurrentFrame의 IMU bias를 활용하여 KeyFrame의 새로운 bias 생성
+    mpReferenceKF = pKF;    // Tracking.h에 있는 Reference Key Frame에 대한 변수를 현재 Key Frame 대입
+    mCurrentFrame.mpReferenceKF = pKF;  // Current Frame의 Reference Key Frame을 현재 Key Frame을 대입
 
-    if(mpLastKeyFrame)
+    if(mpLastKeyFrame)  // Last KeyFrame이 존재한다면
     {
-        pKF->mPrevKF = mpLastKeyFrame;
-        mpLastKeyFrame->mNextKF = pKF;
+        pKF->mPrevKF = mpLastKeyFrame;  // 현재 만든 KeyFrame의 이전 Frame을 Last Key Frame으로 대입
+        mpLastKeyFrame->mNextKF = pKF;  // 이전 Frame의 Next KeyFrame을 KeyFrame으로 대입
+        // 자료구조 중 이중 연결 리스트(doubly linked list) 느낌
     }
-    else
-        Verbose::PrintMess("No last KF in KF creation!!", Verbose::VERBOSITY_NORMAL);
+    else    // Last KeyFrame이 존재하지 않는다면
+        Verbose::PrintMess("No last KF in KF creation!!", Verbose::VERBOSITY_NORMAL);   // 출력
 
     // Reset preintegration from last KF (Create new object)
+    // Last KeyFrame으로부터 preintegration을 수행
+    // Monocular-Inertial 모드이거나 Stereo-Inertial 모드일 때
     if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
     {
         mpImuPreintegratedFromLastKF = new IMU::Preintegrated(pKF->GetImuBias(),pKF->mImuCalib);
+        // KeyFrame의 IMU bias, calibration을 활용
+        // KeyFrame을 활용해서 ImuPreintegrated를 수행하는데 여기서 변수 이름이 Last KeyFrame으로 부터 ImuPreintegrated를 하는 지는 의문
     }
 
+    // Stereo 모드 이거나 Stereo-Inertial 모드인 경우
     if(mSensor!=System::MONOCULAR && mSensor != System::IMU_MONOCULAR) // TODO check if incluide imu_stereo
     {
-        mCurrentFrame.UpdatePoseMatrices();
+        mCurrentFrame.UpdatePoseMatrices(); // Current Frame의 카메라 Pose update
         // cout << "create new MPs" << endl;
         // We sort points by the measured depth by the stereo/RGBD sensor.
         // We create all those MapPoints whose depth < mThDepth.
         // If there are less than 100 close points we create the 100 closest.
+
+        // Stereo / RGBD 센서를 활용해 Depth를 측정 그리고 Sort를 진행
+        // Close point가 100개가 안 될 경우, 100개의 가까운 Map point를 생성
         int maxPoint = 100;
         if(mSensor == System::IMU_STEREO)
             maxPoint = 100;
 
         vector<pair<float,int> > vDepthIdx;
+
+        // Current Frame의 KeyPoint의 갯수를 가져온다.
+        // Fisheye stereo 카메라일 때는 Nleft값을 가져온다. (왼쪽에서 보이는 KeyPoint의 갯수)
         int N = (mCurrentFrame.Nleft != -1) ? mCurrentFrame.Nleft : mCurrentFrame.N;
-        vDepthIdx.reserve(mCurrentFrame.N);
+
+        vDepthIdx.reserve(mCurrentFrame.N); // Key Point의 갯수만큼 DepthIdx의 크기를 할당
+
+        // Depth값과 Index를 pair를 활용하여 쌍으로 저장
         for(int i=0; i<N; i++)
         {
-            float z = mCurrentFrame.mvDepth[i];
+            float z = mCurrentFrame.mvDepth[i]; // Current Frame에서 Map point의 depth값을 가져온다.
             if(z>0)
             {
-                vDepthIdx.push_back(make_pair(z,i));
+                vDepthIdx.push_back(make_pair(z,i));    // vDepthIdx 벡터에 push_back
             }
         }
 
-        if(!vDepthIdx.empty())
+        // 새로운 KeyFrame에 필요한 정보들을 대입
+        if(!vDepthIdx.empty())  // vDepthIdx가 비어있지 않으면
         {
-            sort(vDepthIdx.begin(),vDepthIdx.end());
+            sort(vDepthIdx.begin(),vDepthIdx.end());    // Depth를 오름차순으로 정렬
 
-            int nPoints = 0;
+            int nPoints = 0;    // Point의 갯수를 담을 변수
+
             for(size_t j=0; j<vDepthIdx.size();j++)
             {
-                int i = vDepthIdx[j].second;
+                int i = vDepthIdx[j].second;    // index 값을 i로 가져온다.
 
                 bool bCreateNew = false;
 
-                MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
-                if(!pMP)
+                MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];  // Current Frame에 있는 Map point 하나를 포인터로 선언
+                if(!pMP)    // Map point가 없을 때
                     bCreateNew = true;
-                else if(pMP->Observations()<1)
+                else if(pMP->Observations()<1)  // Map point가 관찰되지 않을 때
                 {
                     bCreateNew = true;
-                    mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
+                    mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);   // Map point를 NULL값으로 초기화
                 }
 
-                if(bCreateNew)
+                if(bCreateNew)  // Map point를 만들어야 할 때
                 {
-                    cv::Mat x3D;
+                    cv::Mat x3D;    // Map point에 대한 3차원 정보를 담을 변수 생성  
 
-                    if(mCurrentFrame.Nleft == -1){
-                        x3D = mCurrentFrame.UnprojectStereo(i);
+                    if(mCurrentFrame.Nleft == -1){  // Stereo Fisyeye Camera가 아닐 때
+                        x3D = mCurrentFrame.UnprojectStereo(i); // Unprojection을 이용해서 3차원 정보 획득
                     }
-                    else{
-                        x3D = mCurrentFrame.UnprojectStereoFishEye(i);
+                    else{   // Stereo Fisheye Camera일 때
+                        x3D = mCurrentFrame.UnprojectStereoFishEye(i);  // Fisheye camera용 Unprojection을 활용해서 3차원 정보 획득
                     }
 
                     MapPoint* pNewMP = new MapPoint(x3D,pKF,mpAtlas->GetCurrentMap());
-                    pNewMP->AddObservation(pKF,i);
+                    // 위에서 구한 3차원 정보, KeyFrame, Current Map을 활용해서 새로운 Map point 생성
+                    pNewMP->AddObservation(pKF,i);  // KeyFrame에서 Map point가 관찰이 가능하다고 알려준다. (Index를 활용해서 저장)
 
                     //Check if it is a stereo observation in order to not
                     //duplicate mappoints
+
+                    // Stereo observation인지 아닌지 확인
+                    // Stereo Fisheye Camera일 경우 Left가 아닌 Right에 대해서도 정보를 대입
+                    // mvLeftToRightMatch 변수를 활용, MapPoints의 AddObservation(), AddMapPoint() 함수로 추가
                     if(mCurrentFrame.Nleft != -1 && mCurrentFrame.mvLeftToRightMatch[i] >= 0){
                         mCurrentFrame.mvpMapPoints[mCurrentFrame.Nleft + mCurrentFrame.mvLeftToRightMatch[i]]=pNewMP;
                         pNewMP->AddObservation(pKF,mCurrentFrame.Nleft + mCurrentFrame.mvLeftToRightMatch[i]);
                         pKF->AddMapPoint(pNewMP,mCurrentFrame.Nleft + mCurrentFrame.mvLeftToRightMatch[i]);
                     }
 
-                    pKF->AddMapPoint(pNewMP,i);
-                    pNewMP->ComputeDistinctiveDescriptors();
-                    pNewMP->UpdateNormalAndDepth();
-                    mpAtlas->AddMapPoint(pNewMP);
+                    pKF->AddMapPoint(pNewMP,i); // KeyFrame에 새로운 map point를 추가
+                    pNewMP->ComputeDistinctiveDescriptors();    // Map point에 대한 ORB matcher Descriptor를 계산
+                    pNewMP->UpdateNormalAndDepth(); // Normal vector와 Depth값을 구함.
+                    mpAtlas->AddMapPoint(pNewMP);   // Atlas map에 Map point를 추가
 
-                    mCurrentFrame.mvpMapPoints[i]=pNewMP;
-                    nPoints++;
+                    mCurrentFrame.mvpMapPoints[i]=pNewMP;   // Current Frame의 Map Point 추가
+                    nPoints++;  // Points 갯수 1증가
                 }
-                else
+
+                else    // Map point를 만들어도 되지 않을 때
                 {
-                    nPoints++;
+                    nPoints++;  // Points 갯수 1증가
                 }
 
+                //Depth 값이 Threshold 값을 넘거나, Map point의 총 갯수가 MaxPoint를 넘을 때
                 if(vDepthIdx[j].first>mThDepth && nPoints>maxPoint)
                 {
-                    break;
+                    break;  // for문에 대한 break
                 }
             }
 
-            Verbose::PrintMess("new mps for stereo KF: " + to_string(nPoints), Verbose::VERBOSITY_NORMAL);
+            Verbose::PrintMess("new mps for stereo KF: " + to_string(nPoints), Verbose::VERBOSITY_NORMAL);  // 출력문
 
         }
     }
 
 
-    mpLocalMapper->InsertKeyFrame(pKF);
+    mpLocalMapper->InsertKeyFrame(pKF); // Local Mapping class에도 KeyFrame 전달
 
-    mpLocalMapper->SetNotStop(false);
+    mpLocalMapper->SetNotStop(false);   // Local Mapping을 Stop하지 않도록 변경
 
-    mnLastKeyFrameId = mCurrentFrame.mnId;
-    mpLastKeyFrame = pKF;
+    mnLastKeyFrameId = mCurrentFrame.mnId;  // Last KeyFrame ID를 Current Frame의 ID로 대입
+    mpLastKeyFrame = pKF;   // Key Frame을 Last KeyFrame으로 대입
     //cout  << "end creating new KF" << endl;
 }
 
-/* !
-* @brief  : Local Map Points와 Current Frame의 Map Points를 매칭시켜주는 함수
-* @param  : None
-* @return : None
-*/
 void Tracking::SearchLocalPoints()
 {
     // Do not search map points already matched
@@ -3652,12 +3730,6 @@ void Tracking::UpdateLocalKeyFrames()
     }
 }
 
-
-/* !
-* @brief  : Tracking이 LOST 되었을 때, Relocalization 시켜주는 함수
-* @param  : None
-* @return : Boolean
-*/
 bool Tracking::Relocalization()
 {
     Verbose::PrintMess("Starting relocalization", Verbose::VERBOSITY_NORMAL);

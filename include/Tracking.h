@@ -276,9 +276,9 @@ protected:
     bool PredictStateIMU();
 
     /* !
-    * @brief  : Tracking이 LOST 되었을 때, Relocalization 시켜주는 함수
-    * @param  : None
-    * @return : Boolean
+    * @brief  Tracking이 LOST 되었을 때, Relocalization 시켜주는 함수
+    * @param  None
+    * @return Boolean
     */
     bool Relocalization();
 
@@ -313,35 +313,45 @@ protected:
     bool TrackLocalMap_old();   // 쓰이지 않음.
     
     /* !
-    * @brief  : Local Map Points와 Current Frame의 Map Points를 매칭시켜주는 함수
-    * @param  : None
-    * @return : None
+    * @brief  Local Map Points와 Current Frame의 Map Points를 매칭시켜주는 함수
+    * @param  None
+    * @return None
     */
     void SearchLocalPoints();
 
+    /* !
+    * @brief 새로운 KeyFrame이 필요한지 판단하기 위한 함수
+    * @param None
+    * @return 새로운 KeyFrame이 필요하면 True, 아니면 False
+    */
     bool NeedNewKeyFrame();
+
+    /* !
+    * @brief 새로운 KeyFrame을 만드는 함수, 새로운 KeyFrame에 대한 정보들도 update
+    * @param None
+    * @return None
+    */
     void CreateNewKeyFrame();
 
-    // 
     /* !
-    * @brief  : Perform preintegration from last frame
-    * @param  : None
-    * @return : None
+    * @brief  Perform preintegration from last frame
+    * @param  None
+    * @return None
     */
     void PreintegrateIMU();
 
     // Reset IMU biases and compute frame velocity
     /* !
-    * @brief  : imu의 gyro bias를 재설정하는 함수입니다. 각 프레임 1번, 2번의 imu rotation, delta rotation 데이터를 통해 bias를 구하고 최신화합니다. 
-    * @param  : None
-    * @return : None
+    * @brief  imu의 gyro bias를 재설정하는 함수입니다. 각 프레임 1번, 2번의 imu rotation, delta rotation 데이터를 통해 bias를 구하고 최신화합니다. 
+    * @param  None
+    * @return None
     */
     void ComputeGyroBias(const vector<Frame*> &vpFs, float &bwx,  float &bwy, float &bwz);
 
     /* !
-    * @brief  : 각 프레임 1번, 2번의 imu velocity, delta position 데이터를 통해 bias를 구하고 최신화합니다. 
-    * @param  : None
-    * @return : None
+    * @brief  각 프레임 1번, 2번의 imu velocity, delta position 데이터를 통해 bias를 구하고 최신화합니다. 
+    * @param  None
+    * @return None
     */
     void ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax,  float &bay, float &baz);
 
