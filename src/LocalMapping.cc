@@ -390,11 +390,6 @@ void LocalMapping::MapPointCulling()
     //cout << "erase MP: " << borrar << endl;
 }
 
-/* !
-* @brief Current KeyFrame을 기준으로 인접한 Keyframe을 이용하여 triangulation을 수행하여 3D point를 생성하고
-*        Atlas-map과 current-map 객체에 3D point를 등록
-*        사용되는 위치: LocalMapping::Run();
-*/
 void LocalMapping::CreateNewMapPoints()
 {
     // Stereo인 경우
