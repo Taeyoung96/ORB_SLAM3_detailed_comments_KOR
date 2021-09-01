@@ -63,16 +63,44 @@ public:
     ~Tracking();
 
     // Parse the config file
+    /* !
+     * @brief Camera parameter를 지정한 file에서 불러옵니다.
+     * @param None
+     * @return booltype
+    */
     bool ParseCamParamFile(cv::FileStorage &fSettings);
+
+    /* !
+     * @brief ORB parameter를 지정한 file에서 불러옵니다.
+     * @param None
+     * @return booltype
+    */
     bool ParseORBParamFile(cv::FileStorage &fSettings);
+
+    /* !
+     * @brief IMU parameter를 지정한 file에서 불러옵니다.
+     * @param None
+     * @return booltype
+    */
     bool ParseIMUParamFile(cv::FileStorage &fSettings);
 
-    // Preprocess the input and call Track(). Extract features and performs stereo matching.
+    /* !
+     * @brief Preprocess the input and call Track(). Extract features and performs stereo matching.
+     * @param None
+     * @return cv matrix
+    */
     cv::Mat GrabImageStereo(const cv::Mat &imRectLeft,const cv::Mat &imRectRight, const double &timestamp, string filename);
+
     cv::Mat GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, string filename);
+
     cv::Mat GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename);
     // cv::Mat GrabImageImuMonocular(const cv::Mat &im, const double &timestamp);
 
+    /* !
+     * @brief IMU data를 queue형태로 저장합니다. 
+     * @param None
+     * @return mutex mlQueueImuData
+    */
     void GrabImuData(const IMU::Point &imuMeasurement);
 
     /* !
@@ -240,6 +268,11 @@ protected:
     */
     bool TrackWithMotionModel();
 
+    /* !
+    * @brief IMU data의 변화량을 이용하여 현재 imu state를 예측하는 함수입니다. 
+    * @param None
+    * @return imu stata의 predict가 완료되면 true 실패하면 false입니다. 
+    */
     bool PredictStateIMU();
 
     /* !
@@ -289,11 +322,27 @@ protected:
     bool NeedNewKeyFrame();
     void CreateNewKeyFrame();
 
-    // Perform preintegration from last frame
+    // 
+    /* !
+    * @brief  : Perform preintegration from last frame
+    * @param  : None
+    * @return : None
+    */
     void PreintegrateIMU();
 
     // Reset IMU biases and compute frame velocity
+    /* !
+    * @brief  : imu의 gyro bias를 재설정하는 함수입니다. 각 프레임 1번, 2번의 imu rotation, delta rotation 데이터를 통해 bias를 구하고 최신화합니다. 
+    * @param  : None
+    * @return : None
+    */
     void ComputeGyroBias(const vector<Frame*> &vpFs, float &bwx,  float &bwy, float &bwz);
+
+    /* !
+    * @brief  : 각 프레임 1번, 2번의 imu velocity, delta position 데이터를 통해 bias를 구하고 최신화합니다. 
+    * @param  : None
+    * @return : None
+    */
     void ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax,  float &bay, float &baz);
 
 
