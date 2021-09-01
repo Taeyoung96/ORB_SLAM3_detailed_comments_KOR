@@ -42,6 +42,40 @@ using namespace std;
 namespace ORB_SLAM3
 {
 
+/* system, orbvocabulary, framedrawer, mapdrawer, atlas, keyframedatabase --> 각각의 class들을 포인터로 선언, 나중에 tracking중에 해당 클래스의 변수들을 가져올때 대부분 사용한다.
+
+strSettingPath, sensor, nameSeq --> 상수로 선언함으로써 나중에 고정변수로 사용한다.
+
+Tracking states를 나타내는 변수  NO_IMAGES_YET=0
+
+int mSensor --> 사용할 센서 (image , imu ...)
+
+int mTrackedFr, bool mbStep --> tracking frame을 진행하고 result를 통한 pose estimate (bool 타입)
+
+bool mbOnlyTracking; --> True if local mapping is deactivated and we are performing only localization 
+
+bool mbVO -->     // In case of performing only localization, this flag is true when there are no matches to
+  points in the map. Still tracking will continue if there are enough matches with temporal points.
+  In that case we are doing visual odometry. The system will try to do relocalization to recover
+  "zero-drift" localization to the map. 해석해보면 localization모드일때(local mapping x), 만약 맵에서 point들과 match가 이루어지지 않는다면 true로 된다. 이게 아니라 만약에 순간적인 point들과 match가 충분히 이루어진다면 tracking은 계속될것이다. 
+  그렇게되면 우리는 visiual odometry를 진행할수 있다. (시각적인 경로탐지?정도로 해석가능할듯) 그러고나면 정상적으로 relocalization이 이루어지고 drift를 최소화시킨다.
+
+mpORBVocabulary, mpKeyFrameDB --> Bag of words
+
+mpInitializer --> monocular에서만 필요함. 
+
+mpSystem --> system 멤버변수
+
+mpViewer, mpFrameDrawer ,mpMapDrawer  --> map viewer에 사용
+
+mpAtlas
+
+mnLastRelocFrameId, time_recently_lost, time_recently_lost_visual, mnInitialFrameId, mnFirstFrameId --> Last Frame, KeyFrame and Relocalisation Info
+
+mbCreatedMap
+
+mpCamera2 
+*/
 
 Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, const string &_nameSeq):
     mState(NO_IMAGES_YET), mSensor(sensor), mTrackedFr(0), mbStep(false),
@@ -50,49 +84,57 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0), time_recently_lost_visual(2.0),
     mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr)
 {
+    //해당 함수는 tracking을 하기 위한 초기값 세팅의 시작으로 볼수 있습니다.
+
     // Load camera parameters from settings file
+    //config 파일에서 fx,fy,cx,cy등등을 가져옵니다. 해당 config파일은 example파일에 예시가 있습니다. 
     cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
 
-    bool b_parse_cam = ParseCamParamFile(fSettings);
-    if(!b_parse_cam)
+    bool b_parse_cam = ParseCamParamFile(fSettings); //config파일에서 불러온 parameter들로 parsecamparamfile함수에서 연산을 합니다. 
+    if(!b_parse_cam) //위의 bool타입 함수, 즉 camera parameter가 잘 들어왔는지 확인하는작업입니다. 
     {
-        std::cout << "*Error with the camera parameters in the config file*" << std::endl;
+        std::cout << "*Error with the camera parameters in the config file*" << std::endl; //에러메세지
     }
 
     // Load ORB parameters
+    //camera parameter와 마찬가지로 ORB parameter를 불러와서 연산을 합니다. 해당 parameter들도 example파일에서 .yaml파일에 보면 나와있습니다.
     bool b_parse_orb = ParseORBParamFile(fSettings);
-    if(!b_parse_orb)
+    if(!b_parse_orb) //camera 부분과 마찬가지입니다. 
     {
         std::cout << "*Error with the ORB parameters in the config file*" << std::endl;
     }
 
-    initID = 0; lastID = 0;
+    initID = 0; lastID = 0; //초기값 선언
 
     // Load IMU parameters
-    bool b_parse_imu = true;
-    if(sensor==System::IMU_MONOCULAR || sensor==System::IMU_STEREO)
+    bool b_parse_imu = true; //초기 bool값 true선언 
+    if(sensor==System::IMU_MONOCULAR || sensor==System::IMU_STEREO) //IMU MONOCULAR OR IMU STEREO 일때만 실행됩니다. 
     {
-        b_parse_imu = ParseIMUParamFile(fSettings);
-        if(!b_parse_imu)
+        b_parse_imu = ParseIMUParamFile(fSettings); //IMU parameter 값 세팅 
+        if(!b_parse_imu) //parameter가 재대로 입력되었나 안되었나 판단합니다.
         {
             std::cout << "*Error with the IMU parameters in the config file*" << std::endl;
         }
 
+        //MaxFrame값을 FrameToResetIMU값으로 받는데 이 값은 fps값으로 결정됩니다. 
+        //예를 들어 imu fps가 200hz면 200값으로 설정되며 이 값은 각 프레임별로 기준값 계산에 사용됩니다.
         mnFramesToResetIMU = mMaxFrames;
     }
 
-    mbInitWith3KFs = false;
+    mbInitWith3KFs = false; //?? 아마 사용이 안되는 변수인걸로 예상합니다. ORB SLAM2 code의 잔해(?)같습니다. 
 
-    mnNumDataset = 0;
+    mnNumDataset = 0; //dataset number 초기화
 
-    if(!b_parse_cam || !b_parse_orb || !b_parse_imu)
+    if(!b_parse_cam || !b_parse_orb || !b_parse_imu) //cam, orb, imu에 대한 parsing이 재대로 이루어졌는지 체크합니다. 
     {
         std::cerr << "**ERROR in the config file, the format is not correct**" << std::endl;
+        
+        //try, catch 구문이 재대로 작성되지 않았습니다. 아직 수정해야되는 부분이라고 생각합니다. 
         try
         {
             throw -1;
         }
-        catch(exception &e)
+        catch(exception &e) 
         {
 
         }
@@ -113,8 +155,8 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     vdPoseOpt_ms.clear();
 #endif
 
-    vnKeyFramesLM.clear();
-    vnMapPointsLM.clear();
+    vnKeyFramesLM.clear(); //keyframe vector clear
+    vnMapPointsLM.clear(); //map points vector clear
 }
 
 #ifdef REGISTER_TIMES
@@ -493,29 +535,30 @@ Tracking::~Tracking()
 
 }
 
-bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
+bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들을 parsing하는 함수입니다. 
 {
-    mDistCoef = cv::Mat::zeros(4,1,CV_32F);
+    mDistCoef = cv::Mat::zeros(4,1,CV_32F); //4x1 사이즈 zero matrix 생성
     cout << endl << "Camera Parameters: " << endl;
-    bool b_miss_params = false;
+    bool b_miss_params = false; //b_miss_params 값 false 선언
 
-    string sCameraName = fSettings["Camera.type"];
-    if(sCameraName == "PinHole")
+    string sCameraName = fSettings["Camera.type"]; //config 파일에서 camera type값 가져옵니다.
+    if(sCameraName == "PinHole") //sCameraName값이 PinHole일 경우
     {
-        float fx, fy, cx, cy;
+        float fx, fy, cx, cy; // fx,fy는 초점거리 , cx, cy는 주점을 뜻합니다.
 
         // Camera calibration parameters
-        cv::FileNode node = fSettings["Camera.fx"];
-        if(!node.empty() && node.isReal())
+        cv::FileNode node = fSettings["Camera.fx"]; //node에 camera.fx 값을 가져옵니다.
+        if(!node.empty() && node.isReal()) //node에 값이 비어있지 않고 부동소수점값이면 실행합니다.
         {
-            fx = node.real();
+            fx = node.real(); //해당값을 가져옵니다. 
         }
         else
         {
             std::cerr << "*Camera.fx parameter doesn't exist or is not a real number*" << std::endl;
-            b_miss_params = true;
+            b_miss_params = true;  //b_miss_params값 true
         }
 
+        //이하 앞의 fx의 형식과 모두 동일합니다.
         node = fSettings["Camera.fy"];
         if(!node.empty() && node.isReal())
         {
@@ -549,11 +592,12 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
             b_miss_params = true;
         }
 
-        // Distortion parameters
+        // Distortion parameters 
+        //k1,k2: radial distortion 계수, p1,p2: tangential distortion 계수
         node = fSettings["Camera.k1"];
         if(!node.empty() && node.isReal())
         {
-            mDistCoef.at<float>(0) = node.real();
+            mDistCoef.at<float>(0) = node.real(); //초기에 설정해놓은 4x1 매트릭스에 대입합니다.
         }
         else
         {
@@ -594,6 +638,7 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
             b_miss_params = true;
         }
 
+        //해당값은 어떤건지 아직 모르겠습니다.코드상으로는 k3값이 주어져있다면 초기의 Distortion 매트릭스의 size를 늘리고 추가해줍니다. 
         node = fSettings["Camera.k3"];
         if(!node.empty() && node.isReal())
         {
@@ -601,18 +646,19 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
             mDistCoef.at<float>(4) = node.real();
         }
 
-        if(b_miss_params)
+        if(b_miss_params) //위의 k3값 제외하고 한개라도 값이 error가 있을경우 false합니다. 
         {
             return false;
         }
 
-        vector<float> vCamCalib{fx,fy,cx,cy};
+        vector<float> vCamCalib{fx,fy,cx,cy}; //vertor를 생성해줍니다. 
 
-        mpCamera = new Pinhole(vCamCalib);
+        mpCamera = new Pinhole(vCamCalib); //CameraModel의 Pinhole class를 새로 생성합니다. 
 
-        mpAtlas->AddCamera(mpCamera);
+        mpAtlas->AddCamera(mpCamera); //atlas 데이터저장소에 camera를 add합니다.
 
 
+        //위에서 가져왔던 camera parameter들을 print합니다.
         std::cout << "- Camera: Pinhole" << std::endl;
         std::cout << "- fx: " << fx << std::endl;
         std::cout << "- fy: " << fy << std::endl;
@@ -625,9 +671,10 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
         std::cout << "- p1: " << mDistCoef.at<float>(2) << std::endl;
         std::cout << "- p2: " << mDistCoef.at<float>(3) << std::endl;
 
-        if(mDistCoef.rows==5)
+        if(mDistCoef.rows==5) //k3값이 있을경우 실행됩니다. 
             std::cout << "- k3: " << mDistCoef.at<float>(4) << std::endl;
 
+        //homogeneouse matrix로 생성
         mK = cv::Mat::eye(3,3,CV_32F);
         mK.at<float>(0,0) = fx;
         mK.at<float>(1,1) = fy;
@@ -635,12 +682,13 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
         mK.at<float>(1,2) = cy;
 
     }
-    else if(sCameraName == "KannalaBrandt8")
+    else if(sCameraName == "KannalaBrandt8") //fisheye camera 모델로 추정됩니다. 
     {
         float fx, fy, cx, cy;
         float k1, k2, k3, k4;
 
         // Camera calibration parameters
+        // 앞서 진행했던 if문과 구조가 동일합니다. 
         cv::FileNode node = fSettings["Camera.fx"];
         if(!node.empty() && node.isReal())
         {
@@ -750,7 +798,7 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
             mK.at<float>(1,2) = cy;
         }
 
-        if(mSensor==System::STEREO || mSensor==System::IMU_STEREO){
+        if(mSensor==System::STEREO || mSensor==System::IMU_STEREO){ //fisheye카메라일때 stereo와 imu stereo일때 실행합니다. 
             // Right camera
             // Camera calibration parameters
             cv::FileNode node = fSettings["Camera2.fx"];
@@ -840,14 +888,17 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
                 b_miss_params = true;
             }
 
+            
+            // left camera lapping
 
-            int leftLappingBegin = -1;
-            int leftLappingEnd = -1;
+            int leftLappingBegin = -1; //lapping begin은 left camera의 lapping이 시작되는 왼쪽 column 입니다
+            int leftLappingEnd = -1; //laapping end는 left camera의 lapping이 끝나는 오른쪽 column입니다. 
 
-            int rightLappingBegin = -1;
-            int rightLappingEnd = -1;
+            // right camera lapping
+            int rightLappingBegin = -1; 
+            int rightLappingEnd = -1; 
 
-            node = fSettings["Camera.lappingBegin"];
+            node = fSettings["Camera.lappingBegin"]; //fisheye camera의 lapping area를 설정합니다. 
             if(!node.empty() && node.isInt())
             {
                 leftLappingBegin = node.operator int();
@@ -883,7 +934,8 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
             {
                 std::cout << "WARNING: Camera2.lappingEnd not correctly defined" << std::endl;
             }
-
+            
+            //Tlr은 transfomation matrix이고 이건 left camera 와 right camera사이의 transformation matrix입니다. 
             node = fSettings["Tlr"];
             if(!node.empty())
             {
@@ -900,7 +952,7 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
                 b_miss_params = true;
             }
 
-            if(!b_miss_params)
+            if(!b_miss_params) //b_miss_params가 false이면 실행된다. 즉 모든 param이 정상일때 실행됩니다. 
             {
                 static_cast<KannalaBrandt8*>(mpCamera)->mvLappingArea[0] = leftLappingBegin;
                 static_cast<KannalaBrandt8*>(mpCamera)->mvLappingArea[1] = leftLappingEnd;
@@ -940,15 +992,17 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
         mpAtlas->AddCamera(mpCamera);
         mpAtlas->AddCamera(mpCamera2);
     }
-    else
+
+
+    else //pinhole과 fisheye 둘다 아니라면 실행됩니다. 
     {
-        std::cerr << "*Not Supported Camera Sensor*" << std::endl;
-        std::cerr << "Check an example configuration file with the desired sensor" << std::endl;
+        std::cerr << "*Not Supported Camera Sensor*" << std::endl; //error message
+        std::cerr << "Check an example configuration file with the desired sensor" << std::endl; //error message
     }
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
     {
-        cv::FileNode node = fSettings["Camera.bf"];
+        cv::FileNode node = fSettings["Camera.bf"]; //baseline과 FOV를 통해 bf값을 구할수 있습니다. 
         if(!node.empty() && node.isReal())
         {
             mbf = node.real();
@@ -961,18 +1015,18 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
 
     }
 
-    float fps = fSettings["Camera.fps"];
+    float fps = fSettings["Camera.fps"]; //camera fps설정값을 가져옵니다 
     if(fps==0)
         fps=30;
 
     // Max/Min Frames to insert keyframes and to check relocalisation
-    mMinFrames = 0;
-    mMaxFrames = fps;
+    mMinFrames = 0; //minframese는 0값 선언
+    mMaxFrames = fps; //maxframes는 해당 fps로 선언됩니다. 
 
     cout << "- fps: " << fps << endl;
 
 
-    int nRGB = fSettings["Camera.RGB"];
+    int nRGB = fSettings["Camera.RGB"]; //camera image가 rgb인지 bgr인지 입력합니다. 
     mbRGB = nRGB;
 
     if(mbRGB)
@@ -987,7 +1041,7 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
         if(!node.empty()  && node.isReal())
         {
             mThDepth = node.real();
-            mThDepth = mbf*mThDepth/fx;
+            mThDepth = mbf*mThDepth/fx; //원거리 근거리 임계점을 설정합니다. 
             cout << endl << "Depth Threshold (Close/Far Points): " << mThDepth << endl;
         }
         else
@@ -1013,12 +1067,12 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
         else
         {
             std::cerr << "*DepthMapFactor parameter doesn't exist or is not a real number*" << std::endl;
-            b_miss_params = true;
+            b_miss_params = true; //error message
         }
 
     }
 
-    if(b_miss_params)
+    if(b_miss_params) //error message 발생시 false 반환
     {
         return false;
     }
@@ -1026,12 +1080,14 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
     return true;
 }
 
-bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
+bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings) //ORB parameter들을 parsing하는 함수입니다.
 {
-    bool b_miss_params = false;
-    int nFeatures, nLevels, fIniThFAST, fMinThFAST;
-    float fScaleFactor;
+    bool b_miss_params = false; //초기error값 선언
+    int nFeatures, nLevels, fIniThFAST, fMinThFAST; //feature 갯수 , nlevel 기준, init fast feature 값, min fast feature 값
+    float fScaleFactor; //nlevel에 따른 scale 값
 
+
+    //특별한건 없습니다. config파일에서 해당하는 param의 값들을 불러옵니다. 
     cv::FileNode node = fSettings["ORBextractor.nFeatures"];
     if(!node.empty() && node.isInt())
     {
@@ -1110,12 +1166,14 @@ bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
     return true;
 }
 
-bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
+bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings) //IMU paramter들을 parsing하는 함수입니다. 
 {
     bool b_miss_params = false;
 
+    //이 함수 또한 마찬가지로 config파일에서 해당하는 param값들을 불러와 저장합니다. 
+
     cv::Mat Tbc;
-    cv::FileNode node = fSettings["Tbc"];
+    cv::FileNode node = fSettings["Tbc"]; //transformation matrix입니다. body to imu입니다. 
     if(!node.empty())
     {
         Tbc = node.mat();
@@ -1137,7 +1195,7 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
 
     float freq, Ng, Na, Ngw, Naw;
 
-    node = fSettings["IMU.Frequency"];
+    node = fSettings["IMU.Frequency"]; //imu hz를 불러옵니다. 
     if(!node.empty() && node.isInt())
     {
         freq = node.operator int();
@@ -1148,7 +1206,7 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
         b_miss_params = true;
     }
 
-    node = fSettings["IMU.NoiseGyro"];
+    node = fSettings["IMU.NoiseGyro"]; //imu gyro의 noise값입니다 .
     if(!node.empty() && node.isReal())
     {
         Ng = node.real();
@@ -1234,30 +1292,32 @@ void Tracking::SetStepByStep(bool bSet)
 }
 
 
-cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp, string filename)
-{
-    mImGray = imRectLeft;
-    cv::Mat imGrayRight = imRectRight;
-    mImRight = imRectRight;
 
-    if(mImGray.channels()==3)
+cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp, string filename) 
+//imRectleft 왼쪽 이미지, imrectright 오른쪽 이미지, timestamp, filename 선언 --> stereo image data를 불러옴
+{
+    mImGray = imRectLeft;   //left image를 가져옵니다. 
+    cv::Mat imGrayRight = imRectRight; //right image를 가져옵니다. 
+    mImRight = imRectRight; //right image를 가져옵니다. 
+
+    if(mImGray.channels()==3) //image가 channel이 3개면, 즉 color image data면 실행됩니다. 
     {
-        if(mbRGB)
+        if(mbRGB) //rgb 데이터라면 
         {
-            cvtColor(mImGray,mImGray,cv::COLOR_RGB2GRAY);
-            cvtColor(imGrayRight,imGrayRight,cv::COLOR_RGB2GRAY);
+            cvtColor(mImGray,mImGray,cv::COLOR_RGB2GRAY);   //image를 gray scale로 변환합니다. 
+            cvtColor(imGrayRight,imGrayRight,cv::COLOR_RGB2GRAY); //마찬가지로 gray scale로 변환합니다. 
         }
-        else
+        else //rgb가 아닌 bgr일때
         {
-            cvtColor(mImGray,mImGray,cv::COLOR_BGR2GRAY);
-            cvtColor(imGrayRight,imGrayRight,cv::COLOR_BGR2GRAY);
+            cvtColor(mImGray,mImGray,cv::COLOR_BGR2GRAY); //image를 gray scale로 변환합니다. 
+            cvtColor(imGrayRight,imGrayRight,cv::COLOR_BGR2GRAY); //image를 gray scale로 변환합니다. 
         }
     }
-    else if(mImGray.channels()==4)
+    else if(mImGray.channels()==4)  //image가 rgba일때 --> alpha값이 추가된 데이터 --> 각 픽셀의 투명도를 뜻함. 딱히...
     {
         if(mbRGB)
         {
-            cvtColor(mImGray,mImGray,cv::COLOR_RGBA2GRAY);
+            cvtColor(mImGray,mImGray,cv::COLOR_RGBA2GRAY); //마찬가지로 모두 gray scale로 변환
             cvtColor(imGrayRight,imGrayRight,cv::COLOR_RGBA2GRAY);
         }
         else
@@ -1267,13 +1327,13 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
         }
     }
 
-    if (mSensor == System::STEREO && !mpCamera2)
+    if (mSensor == System::STEREO && !mpCamera2) //stereo이고 fisheye가 아닐때를 의미합니다. 
         mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera);
-    else if(mSensor == System::STEREO && mpCamera2)
+    else if(mSensor == System::STEREO && mpCamera2) //stereo이고 fisheye일때를 의미합니다. --> 차이점은 mpCamera2가 들어갑니다. 즉 lapping 포인트를 고려하느냐 안하느냐의 차이점입니다. 
         mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,mpCamera2,mTlr);
-    else if(mSensor == System::IMU_STEREO && !mpCamera2)
-        mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib);
-    else if(mSensor == System::IMU_STEREO && mpCamera2)
+    else if(mSensor == System::IMU_STEREO && !mpCamera2) //imu stereo이고 pinhole 일때를 의미합니다. 
+        mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib); //추가적인 parameter는 lastframe과 imuclib가 있습니다. 해당기능은 위에서 설명했습니다. 
+    else if(mSensor == System::IMU_STEREO && mpCamera2) //imu stereo이고 fisheye일때를 의미합니다. 
         mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,mpCamera2,mTlr,&mLastFrame,*mpImuCalib);
 
     mCurrentFrame.mNameFile = filename;
@@ -1290,8 +1350,9 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
 }
 
 
-cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, string filename)
+cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, string filename) //해당 study에서는 stereo만 진행하고 있으므로 이외의 type은 제외합니다. 
 {
+    
     mImGray = imRGB;
     cv::Mat imDepth = imD;
 
@@ -1328,7 +1389,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
 }
 
 
-cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)
+cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)//해당 study에서는 stereo만 진행하고 있으므로 이외의 type은 제외합니다. 
 {
     mImGray = im;
 
@@ -1383,8 +1444,8 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp,
 
 void Tracking::GrabImuData(const IMU::Point &imuMeasurement)
 {
-    unique_lock<mutex> lock(mMutexImuQueue);
-    mlQueueImuData.push_back(imuMeasurement);
+    unique_lock<mutex> lock(mMutexImuQueue); //mutex로 선언된 mMutexImuQueue를 lock하고
+    mlQueueImuData.push_back(imuMeasurement); //mlQueueImuData에 새로운 imuMeasurement를 입력합니다. 
 }
 
 void Tracking::PreintegrateIMU()
@@ -1393,87 +1454,85 @@ void Tracking::PreintegrateIMU()
 
     if(!mCurrentFrame.mpPrevFrame)
     {
-        Verbose::PrintMess("non prev frame ", Verbose::VERBOSITY_NORMAL);
-        mCurrentFrame.setIntegrated();
+        Verbose::PrintMess("non prev frame ", Verbose::VERBOSITY_NORMAL); //prevframe이 존재하지 않을때 즉. 맨처음 시작임을 뜻합니다. 
+        mCurrentFrame.setIntegrated(); //새로운 mutex imu를 선언하게되고 imu preinterate를 true값으로 반환합니다.
         return;
     }
 
-    mvImuFromLastFrame.clear();
-    mvImuFromLastFrame.reserve(mlQueueImuData.size());
-    if(mlQueueImuData.size() == 0)
+    mvImuFromLastFrame.clear(); //preframe이 존재하고 lastframe에 있던 imu data를 clear합니다. 
+    mvImuFromLastFrame.reserve(mlQueueImuData.size()); //memory size를 기존 queue size만큼 늘려줍니다. 
+    if(mlQueueImuData.size() == 0) //만약 queue size가 0일때 실행합니다. 
     {
-        Verbose::PrintMess("Not IMU data in mlQueueImuData!!", Verbose::VERBOSITY_NORMAL);
-        mCurrentFrame.setIntegrated();
+        Verbose::PrintMess("Not IMU data in mlQueueImuData!!", Verbose::VERBOSITY_NORMAL); //queue size가 0이라는 의미는 imu데이터가 존재하지 않는다는 의미입니다. 
+        mCurrentFrame.setIntegrated(); //imu pre integrated 값을 true로 반환하게 됩니다. 즉 setIntegrated 함수가 실행되면 imu값을 받지 않게됩니다. 
         return;
     }
 
-    while(true)
+    while(true) //while문 start
     {
-        bool bSleep = false;
+        bool bSleep = false; //초기값 선언
         {
-            unique_lock<mutex> lock(mMutexImuQueue);
-            if(!mlQueueImuData.empty())
+            unique_lock<mutex> lock(mMutexImuQueue); //imu queue를 생성합니다.
+            if(!mlQueueImuData.empty()) //imu 데이터가 존재하는 경우
             {
-                IMU::Point* m = &mlQueueImuData.front();
-                cout.precision(17);
-                if(m->t<mCurrentFrame.mpPrevFrame->mTimeStamp-0.001l)
+                IMU::Point* m = &mlQueueImuData.front(); //queue의 가장 오래된 imu데이터 주소값을 가져옵니다. 
+                cout.precision(17); //소수점자리수를 17개로 설정
+                if(m->t < mCurrentFrame.mpPrevFrame->mTimeStamp-0.001l) // 가장 오래된 imu데이터에서 t값(time_stamp)을 가져온뒤 바로 이전 frame의 time stamp -0.001과 비교합니다. 만약 더 크다면 prev frame보다 최신의 imu 데이터라고 볼수 있습니다. 
                 {
-                    mlQueueImuData.pop_front();
+                    mlQueueImuData.pop_front(); //front의 imu를 삭제합니다. 
                 }
-                else if(m->t<mCurrentFrame.mTimeStamp-0.001l)
+                else if(m->t < mCurrentFrame.mTimeStamp-0.001l)  //prev frame보다는 최신데이터이게되면 current frame과 비교합니다. imu데이터들을 저장한뒤 버리고를 반복합니다. 
                 {
-                    mvImuFromLastFrame.push_back(*m);
+                    mvImuFromLastFrame.push_back(*m); 
                     mlQueueImuData.pop_front();
                 }
                 else
                 {
-                    mvImuFromLastFrame.push_back(*m);
+                    mvImuFromLastFrame.push_back(*m); //가장 최신의 imu들은 저장합니다. 
                     break;
                 }
             }
-            else
+            else //imu데이터가 존재하지 않는다면 
             {
                 break;
                 bSleep = true;
             }
         }
         if(bSleep)
-            usleep(500);
+            usleep(500); //500milli sec
     }
 
 
-    const int n = mvImuFromLastFrame.size()-1;
-    IMU::Preintegrated* pImuPreintegratedFromLastFrame = new IMU::Preintegrated(mLastFrame.mImuBias,mCurrentFrame.mImuCalib);
+        const int n = mvImuFromLastFrame.size()-1; //n을 from last frame size의 -1로 선언합니다. 이유는 vector로 선언했기때문입니다. 
+    IMU::Preintegrated* pImuPreintegratedFromLastFrame = new IMU::Preintegrated(mLastFrame.mImuBias,mCurrentFrame.mImuCalib); //Preintegration of Imu Measurements 선언
 
-    for(int i=0; i<n; i++)
+    for(int i=0; i<n; i++) //lastframe에 있는 imu 데이터를 모두 수행합니다. 
     {
-        float tstep;
-        cv::Point3f acc, angVel;
-        if((i==0) && (i<(n-1)))
+        float tstep; //tstep float형태로 선언합니다.
+        cv::Point3f acc, angVel;  //point 형태로 acc, angVel 선언합니다. 
+        if((i==0) && (i<(n-1)))  //i가 0이고 n-1보다 작을때, 즉 lastframe에 포함된 imu가 갯수가 1이상일때의 초기값을 의미합니다. 
         {
-            float tab = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
-            float tini = mvImuFromLastFrame[i].t-mCurrentFrame.mpPrevFrame->mTimeStamp;
-            acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a-
-                    (mvImuFromLastFrame[i+1].a-mvImuFromLastFrame[i].a)*(tini/tab))*0.5f;
-            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w-
-                    (mvImuFromLastFrame[i+1].w-mvImuFromLastFrame[i].w)*(tini/tab))*0.5f;
-            tstep = mvImuFromLastFrame[i+1].t-mCurrentFrame.mpPrevFrame->mTimeStamp;
-        }
+            float tab = mvImuFromLastFrame[i+1].t - mvImuFromLastFrame[i].t; // 각각 i번째 imu 데이터의 timestamp값을 빼줍니다. 즉 imu 데이터의 시간 간격을 tab에 저장합니다. 
+            float tini = mvImuFromLastFrame[i].t - mCurrentFrame.mpPrevFrame->mTimeStamp; //바로 직전 imu데이터의 stamp와 lastframe의 i번째 imu데이터와 시간 간격을 tini에 저장합니다. 
+            acc = (mvImuFromLastFrame[i].a + mvImuFromLastFrame[i+1].a -  (mvImuFromLastFrame[i+1].a - mvImuFromLastFrame[i].a)*(tini/tab))*0.5f; //이부분 같은 경우는 맨 처음부분인데 해당부분은 frame과 정확한 매칭이 어려워서 
+            angVel = (mvImuFromLastFrame[i].w + mvImuFromLastFrame[i+1].w - (mvImuFromLastFrame[i+1].w - mvImuFromLastFrame[i].w)*(tini/tab))*0.5f; //medium 적분에 보정값을 넣어줍니다. --> (mvImuFromLastFrame[i+1].w - mvImuFromLastFrame[i].w)*(tini/tab)
+            tstep = mvImuFromLastFrame[i+1].t - mCurrentFrame.mpPrevFrame -> mTimeStamp; //tstep은 tini 다음 step을 의미합니다. --> 음수값일텐데....?
+        }    
         else if(i<(n-1))
         {
-            acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a)*0.5f;
-            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w)*0.5f;
-            tstep = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
+            acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a)*0.5f; //일반 medium 적분입니다. 
+            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w)*0.5f; //동일합니다. 
+            tstep = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t; //다음 step의 time을 의미합니다. 
         }
         else if((i>0) && (i==(n-1)))
         {
-            float tab = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
-            float tend = mvImuFromLastFrame[i+1].t-mCurrentFrame.mTimeStamp;
+            float tab = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t; //time offset 값입니다. 
+            float tend = mvImuFromLastFrame[i+1].t-mCurrentFrame.mTimeStamp; // 마지막의 imu데이터와 가장 최신의 frame의 시간을 뺀 값입니다. 
             acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a-
-                    (mvImuFromLastFrame[i+1].a-mvImuFromLastFrame[i].a)*(tend/tab))*0.5f;
-            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w-
+                    (mvImuFromLastFrame[i+1].a-mvImuFromLastFrame[i].a)*(tend/tab))*0.5f; // 맨 처음부분과 동일하게 마지막부분도 frame과의 timestamp가 동일하게 맞기 힘듭니다. 따라서 
+            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w- // 보정값을 넣어줍니다. 
                     (mvImuFromLastFrame[i+1].w-mvImuFromLastFrame[i].w)*(tend/tab))*0.5f;
-            tstep = mCurrentFrame.mTimeStamp-mvImuFromLastFrame[i].t;
+            tstep = mCurrentFrame.mTimeStamp-mvImuFromLastFrame[i].t; 
         }
         else if((i==0) && (i==(n-1)))
         {
@@ -1484,57 +1543,60 @@ void Tracking::PreintegrateIMU()
 
         if (!mpImuPreintegratedFromLastKF)
             cout << "mpImuPreintegratedFromLastKF does not exist" << endl;
-        mpImuPreintegratedFromLastKF->IntegrateNewMeasurement(acc,angVel,tstep);
-        pImuPreintegratedFromLastFrame->IntegrateNewMeasurement(acc,angVel,tstep);
+        mpImuPreintegratedFromLastKF-> (acc,angVel,tstep); //해당 acc, angVel, tstep을 mpImuPreintegratedFromLastKF에 저장합니다. 
+        pImuPreintegratedFromLastFrame->IntegrateNewMeasurement(acc,angVel,tstep); //직전의 position을 저장한 뒤, Update delta rotation,
+        //Compute rotation parts of matrices A and B, Update rotation jacobian wrt bias correction, Total integrated time 작업을 합니다. 
     }
 
-    mCurrentFrame.mpImuPreintegratedFrame = pImuPreintegratedFromLastFrame;
-    mCurrentFrame.mpImuPreintegrated = mpImuPreintegratedFromLastKF;
-    mCurrentFrame.mpLastKeyFrame = mpLastKeyFrame;
+    mCurrentFrame.mpImuPreintegratedFrame = pImuPreintegratedFromLastFrame; // CurrentFrame class의 imupreintegratedFrame pointer에다가 pImuPreintegratedFromLastFrame을 저장합니다.
+    mCurrentFrame.mpImuPreintegrated = mpImuPreintegratedFromLastKF; // CurrentFrame class의 mpImuPreintegrated pointer에다가 mpImuPreintegratedFromLastKF을 저장합니다.
+    mCurrentFrame.mpLastKeyFrame = mpLastKeyFrame; //마찬가지입니다!
 
-    mCurrentFrame.setIntegrated();
+    mCurrentFrame.setIntegrated();  //imu 데이터 정리가 끝났으므로 lock 작업을 하게됩니다. imu를 더이상 받지 않는다라는 뜻으로 이해해도 괜찮습니다. 
 
-    Verbose::PrintMess("Preintegration is finished!! ", Verbose::VERBOSITY_DEBUG);
+    Verbose::PrintMess("Preintegration is finished!! ", Verbose::VERBOSITY_DEBUG); //preintegration finish
 }
 
 
 bool Tracking::PredictStateIMU()
 {
-    if(!mCurrentFrame.mpPrevFrame)
+    if(!mCurrentFrame.mpPrevFrame)  //CurrentFrame에서 previous Frame이 존재하지 않을때입니다. 
     {
         Verbose::PrintMess("No last frame", Verbose::VERBOSITY_NORMAL);
         return false;
     }
 
-    if(mbMapUpdated && mpLastKeyFrame)
+    if(mbMapUpdated && mpLastKeyFrame) //map update가 진행됬고, lastkeyframe이 존재할때 실행됩니다. 
     {
-        const cv::Mat twb1 = mpLastKeyFrame->GetImuPosition();
-        const cv::Mat Rwb1 = mpLastKeyFrame->GetImuRotation();
-        const cv::Mat Vwb1 = mpLastKeyFrame->GetVelocity();
+        const cv::Mat twb1 = mpLastKeyFrame->GetImuPosition(); //transformation 부분 imu데이터를 가져옵니다. 
+        const cv::Mat Rwb1 = mpLastKeyFrame->GetImuRotation(); //rotation 부분 imu데이터를 가져옵니다. 
+        const cv::Mat Vwb1 = mpLastKeyFrame->GetVelocity(); //velocity 값을 가져옵니다. 
 
-        const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE);
-        const float t12 = mpImuPreintegratedFromLastKF->dT;
+        const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE); //IMU data의 gravity 값을 3,1 matrix로 가져옵니다. 
+        const float t12 = mpImuPreintegratedFromLastKF->dT; //1번과 2번의 time 차이값입니다. 
 
-        cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mpImuPreintegratedFromLastKF->GetDeltaRotation(mpLastKeyFrame->GetImuBias()));
-        cv::Mat twb2 = twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mpImuPreintegratedFromLastKF->GetDeltaPosition(mpLastKeyFrame->GetImuBias());
-        cv::Mat Vwb2 = Vwb1 + t12*Gz + Rwb1*mpImuPreintegratedFromLastKF->GetDeltaVelocity(mpLastKeyFrame->GetImuBias());
-        mCurrentFrame.SetImuPoseVelocity(Rwb2,twb2,Vwb2);
-        mCurrentFrame.mPredRwb = Rwb2.clone();
-        mCurrentFrame.mPredtwb = twb2.clone();
-        mCurrentFrame.mPredVwb = Vwb2.clone();
-        mCurrentFrame.mImuBias = mpLastKeyFrame->GetImuBias();
-        mCurrentFrame.mPredBias = mCurrentFrame.mImuBias;
+        //위의 변수들을 통해서 실제 연산에 이용될 값들을 아래 변수들로 정의합니다. 
+
+        cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mpImuPreintegratedFromLastKF->GetDeltaRotation(mpLastKeyFrame->GetImuBias())); //bias값을 고려하여 delta rotation값을 가져오고 해당 값을 SVD(특이값분해) 작업을 진행합니다. 
+        cv::Mat twb2 = twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mpImuPreintegratedFromLastKF->GetDeltaPosition(mpLastKeyFrame->GetImuBias()); //운동방정식 및 노이즈를 계산하여 최종 twb를 구합니다. 
+        cv::Mat Vwb2 = Vwb1 + t12*Gz + Rwb1*mpImuPreintegratedFromLastKF->GetDeltaVelocity(mpLastKeyFrame->GetImuBias()); //velocity 부분도 동일합니다. 
+        mCurrentFrame.SetImuPoseVelocity(Rwb2,twb2,Vwb2); //pose와 velocity를 predict할수 있는 변수들을 입력합니다. 
+        mCurrentFrame.mPredRwb = Rwb2.clone(); //rwb2 matrix 저장
+        mCurrentFrame.mPredtwb = twb2.clone(); //twb2 matrix 저장 
+        mCurrentFrame.mPredVwb = Vwb2.clone(); //Vwb2 matrix 저장
+        mCurrentFrame.mImuBias = mpLastKeyFrame->GetImuBias(); //bias 값 저장
+        mCurrentFrame.mPredBias = mCurrentFrame.mImuBias; //current bias 값 저장
         return true;
     }
-    else if(!mbMapUpdated)
+    else if(!mbMapUpdated) //만약에 map update가 진행되지 않았을때 실행됩니다.
     {
-        const cv::Mat twb1 = mLastFrame.GetImuPosition();
-        const cv::Mat Rwb1 = mLastFrame.GetImuRotation();
+        const cv::Mat twb1 = mLastFrame.GetImuPosition(); //Keyframe이 아닌 일반 frame에서 data를 가져옵니다. 
+        const cv::Mat Rwb1 = mLastFrame.GetImuRotation(); // 마찬가지입니다. 
         const cv::Mat Vwb1 = mLastFrame.mVw;
         const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE);
         const float t12 = mCurrentFrame.mpImuPreintegratedFrame->dT;
 
-        cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaRotation(mLastFrame.mImuBias));
+        cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaRotation(mLastFrame.mImuBias)); //위에서 keyframe데이터로 했던 것과 동일합니다. 
         cv::Mat twb2 = twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaPosition(mLastFrame.mImuBias);
         cv::Mat Vwb2 = Vwb1 + t12*Gz + Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaVelocity(mLastFrame.mImuBias);
 
@@ -1555,32 +1617,32 @@ bool Tracking::PredictStateIMU()
 
 void Tracking::ComputeGyroBias(const vector<Frame*> &vpFs, float &bwx,  float &bwy, float &bwz)
 {
-    const int N = vpFs.size();
-    vector<float> vbx;
-    vbx.reserve(N);
-    vector<float> vby;
-    vby.reserve(N);
-    vector<float> vbz;
-    vbz.reserve(N);
+    const int N = vpFs.size(); //vpFs는 index값으로 추측됩니다. 즉 데이터 갯수를 뜻합니다. 
+    vector<float> vbx; //gyro의 bias x 값입니다. 
+    vbx.reserve(N); //memory 증가합니다. 
+    vector<float> vby; //gyro의 bias y 값입니다.
+    vby.reserve(N); //memory값을 증가합니다. 
+    vector<float> vbz; //동일
+    vbz.reserve(N); //동일
 
-    cv::Mat H = cv::Mat::zeros(3,3,CV_32F);
-    cv::Mat grad  = cv::Mat::zeros(3,1,CV_32F);
-    for(int i=1;i<N;i++)
+    cv::Mat H = cv::Mat::zeros(3,3,CV_32F); //32-bit floating-point number , 3x3 matrix 생성합니다. 
+    cv::Mat grad  = cv::Mat::zeros(3,1,CV_32F); //32-bit floating-point number , 3x1 matrix 생성합니다. 
+    for(int i=1;i<N;i++)  //bias의 최종 갯수만큼 연산을 시작합니다.
     {
-        Frame* pF2 = vpFs[i];
-        Frame* pF1 = vpFs[i-1];
-        cv::Mat VisionR = pF1->GetImuRotation().t()*pF2->GetImuRotation();
-        cv::Mat JRg = pF2->mpImuPreintegratedFrame->JRg;
-        cv::Mat E = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaRotation().t()*VisionR;
-        cv::Mat e = IMU::LogSO3(E);
-        assert(fabs(pF2->mTimeStamp-pF1->mTimeStamp-pF2->mpImuPreintegratedFrame->dT)<0.01);
+        Frame* pF2 = vpFs[i]; //대상하는 bias의 앞 bias입니다.
+        Frame* pF1 = vpFs[i-1]; //현재 대상이 되는 bias값입니다. 
+        cv::Mat VisionR = pF1->GetImuRotation().t() * pF2->GetImuRotation(); //각 두개의 frame의 imu값을 곱합니다. (최종 rotation값, GT값으로 볼수있습니다.)
+        cv::Mat JRg = pF2->mpImuPreintegratedFrame->JRg; //bias compute되기 전 original bias값입니다. 
+        cv::Mat E = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaRotation().t() * VisionR; //delta rotation값과 vision R값을 곱해서 변화된 vision R값을 구합니다. 
+        cv::Mat e = IMU::LogSO3(E); //logSO3로 다시 변환합니다. 
+        assert(fabs(pF2->mTimeStamp - pF1->mTimeStamp - pF2->mpImuPreintegratedFrame->dT) < 0.01); //이건 오류메세지를 뽑기위한 라인입니다. 디버깅 작업이라고 할수 있습니다. 
 
-        cv::Mat J = -IMU::InverseRightJacobianSO3(e)*E.t()*JRg;
-        grad += J.t()*e;
-        H += J.t()*J;
+        cv::Mat J = -IMU::InverseRightJacobianSO3(e) * E.t() * JRg; //마지막으로 e matrix와 transpose값과 JRg값을 연산해서 최종 bias matrix 값을 구합니다. 
+        grad += J.t() * e; //기존e에 J.t를 연산하여 zero matrix에 축척합니다.
+        H += J.t() * J; //기존 J에도 J.t를 연산하여 zero matrix에 축척합니다. 
     }
 
-    cv::Mat bg = -H.inv(cv::DECOMP_SVD)*grad;
+    cv::Mat bg = -H.inv(cv::DECOMP_SVD)*grad; //H의 pseudo-inverse matrix와 grap matrix를 연산하여 bg에 저장합니다. 
     bwx = bg.at<float>(0);
     bwy = bg.at<float>(1);
     bwz = bg.at<float>(2);
@@ -1604,7 +1666,7 @@ void Tracking::ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax, 
 
     cv::Mat J(nEqs,nVar,CV_32F,cv::Scalar(0));
     cv::Mat e(nEqs,1,CV_32F,cv::Scalar(0));
-    cv::Mat g = (cv::Mat_<float>(3,1)<<0,0,-IMU::GRAVITY_VALUE);
+    cv::Mat g = (cv::Mat_<float>(3,1) << 0,0, -IMU::GRAVITY_VALUE);
 
     for(int i=0;i<N-1;i++)
     {
@@ -1613,7 +1675,7 @@ void Tracking::ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax, 
         cv::Mat twb1 = pF1->GetImuPosition();
         cv::Mat twb2 = pF2->GetImuPosition();
         cv::Mat Rwb1 = pF1->GetImuRotation();
-        cv::Mat dP12 = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaPosition();
+        cv::Mat dP12 = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaPosition(); 
         cv::Mat dV12 = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaVelocity();
         cv::Mat JP12 = pF2->mpImuPreintegratedFrame->JPa;
         cv::Mat JV12 = pF2->mpImuPreintegratedFrame->JVa;
@@ -1634,20 +1696,20 @@ void Tracking::ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax, 
     cv::Mat x(nVar,1,CV_32F);
     cv::solve(H,B,x);
 
-    bax = x.at<float>(3*N);
+    bax = x.at<float>(3*N);    //N번째 bias를 가져옵니다. 
     bay = x.at<float>(3*N+1);
     baz = x.at<float>(3*N+2);
 
     for(int i=0;i<N;i++)
     {
-        Frame* pF = vpFs[i];
-        x.rowRange(3*i,3*i+3).copyTo(pF->mVw);
-        if(i>0)
+        Frame* pF = vpFs[i]; //각 index의 frame data
+        x.rowRange(3*i,3*i+3).copyTo(pF->mVw); //방정식의 해 x --> position 값과 velocity값이 들어가있습니다. 각 3~6 *i번째의 linear velocity값을 가져옵니다. 
+        if(i>0) //i가 초기값이 아니라면 실행됩니다. 
         {
-            pF->mImuBias.bax = bax;
-            pF->mImuBias.bay = bay;
-            pF->mImuBias.baz = baz;
-            pF->mpImuPreintegratedFrame->SetNewBias(pF->mImuBias);
+            pF->mImuBias.bax = bax; //bias업데이트 합니다.
+            pF->mImuBias.bay = bay; 
+            pF->mImuBias.baz = baz; 
+            pF->mpImuPreintegratedFrame->SetNewBias(pF->mImuBias); //업데이트한 bias값을 갱신합니다. 
         }
     }
 }
