@@ -136,10 +136,28 @@ protected:
     void CreateNewMapPoints();
 
     void MapPointCulling();
+
+    /* !
+    * @brief neighbors keyframe을 검색하고 mappoint를 최종적으로 업데이트하는 함수입니다. 
+    * @param None
+    * @return update about mappoint of keyframe
+    */
     void SearchInNeighbors();
+    
     void KeyFrameCulling();
 
+    /* !
+    * @brief epipolar matrix와 distortion data를 이용하여 fundamental matrix를 구하는 함수합니다. 
+    * @param None
+    * @return Fundamental matrix
+    */
     cv::Mat ComputeF12(KeyFrame* &pKF1, KeyFrame* &pKF2);
+
+    /* !
+    * @brief epipolar matrix와 distortion data를 이용하여 fundamental matrix를 구하는 함수합니다. 
+    * @param None
+    * @return Fundamental matrix
+    */
     cv::Matx33f ComputeF12_(KeyFrame* &pKF1, KeyFrame* &pKF2);
 
     cv::Mat SkewSymmetricMatrix(const cv::Mat &v);
