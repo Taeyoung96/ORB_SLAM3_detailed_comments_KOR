@@ -835,6 +835,7 @@ void LoopClosing::CorrectLoop()
 
     // Send a stop signal to Local Mapping
     // Avoid new keyframes are inserted while correcting the loop
+    //^
     mpLocalMapper->RequestStop();
     mpLocalMapper->EmptyQueue(); // Proccess keyframes in the queue
 
@@ -857,6 +858,7 @@ void LoopClosing::CorrectLoop()
     }
 
     // Wait until Local Mapping has effectively stopped
+    //^
     while(!mpLocalMapper->isStopped())
     {
         usleep(1000);
@@ -1041,6 +1043,7 @@ void LoopClosing::CorrectLoop()
     }
 
     // Loop closed. Release Local Mapping.
+    //^
     mpLocalMapper->Release();
 
     mLastLoopKFid = mpCurrentKF->mnId; //TODO old varible, it is not use in the new algorithm
@@ -1963,8 +1966,8 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
             Verbose::PrintMess("Updating map ...", Verbose::VERBOSITY_NORMAL);
 
             mpLocalMapper->RequestStop();
+            
             // Wait until Local Mapping has effectively stopped
-
             while(!mpLocalMapper->isStopped() && !mpLocalMapper->isFinished())
             {
                 usleep(1000);

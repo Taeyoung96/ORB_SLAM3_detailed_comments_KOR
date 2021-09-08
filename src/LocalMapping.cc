@@ -27,6 +27,8 @@
 #include<mutex>
 #include<chrono>
 
+
+
 namespace ORB_SLAM3
 {
 
@@ -64,6 +66,7 @@ void LocalMapping::SetTracker(Tracking *pTracker)
 void LocalMapping::Run()
 {
     //^ Run
+    //^ mbFinished : While 문을 돌고 있는지 아닌지를 체크하는 Flag 
     mbFinished = false;
 
     while(1)
@@ -268,14 +271,20 @@ void LocalMapping::Run()
             vdLMTotal_ms.push_back(timeLocalMap);
 #endif
         }
-        //^ 정지 명령
+        //^ mlNewKeyFrames가 없을 때
+        //^ Stop request가 왔는지 체크
         else if(Stop() && !mbBadImu)
         {
             // Safe area to stop
+            //^ Stop 요청이 오면 stop이 풀릴 떄까지(mLocalMapper->Release()가 호출될 때까지)
+            //^ 대기
+            //^ 예시 : LoopClosing -> CorrectLoop()
             while(isStopped() && !CheckFinish())
             {
                 usleep(3000);
             }
+            
+            //^ finish request가 왔으면 전체 while 문 out
             if(CheckFinish())
                 break;
         }
@@ -298,6 +307,9 @@ void LocalMapping::Run()
         usleep(3000);
     }
 
+    //^ Stop : while 문 내에서 잠시 대기
+    //^ Finish : while 문을 벗어남( = shutdown)
+
     //^ LM 종료
     SetFinish();
 }
@@ -308,7 +320,6 @@ void LocalMapping::InsertKeyFrame(KeyFrame *pKF)
     mlNewKeyFrames.push_back(pKF);
     mbAbortBA=true;
 }
-
 
 bool LocalMapping::CheckNewKeyFrames()
 {
@@ -869,7 +880,6 @@ void LocalMapping::CreateNewMapPoints()
     }
 }
 
-
 void LocalMapping::SearchInNeighbors()
 {
     // Retrieve neighbor keyframes
@@ -1266,6 +1276,8 @@ cv::Matx33f LocalMapping::SkewSymmetricMatrix_(const cv::Matx31f &v)
     return skew;
 }
 
+
+//^
 void LocalMapping::RequestReset()
 {
     {
@@ -1311,14 +1323,18 @@ void LocalMapping::RequestResetActiveMap(Map* pMap)
 
 void LocalMapping::ResetIfRequested()
 {
+    //^ 1. Inertial parameter 초기화
+    //^ 2. mlNewKeyFrames, mlpRecentAddedMapPoints clear
     bool executed_reset = false;
     {
         unique_lock<mutex> lock(mMutexReset);
+        //^ mbResetRequested && mbResetRequestedActiveMap 리셋
         if(mbResetRequested)
         {
             executed_reset = true;
 
             cout << "LM: Reseting Atlas in Local Mapping..." << endl;
+            
             mlNewKeyFrames.clear();
             mlpRecentAddedMapPoints.clear();
             mbResetRequested=false;
@@ -1330,11 +1346,12 @@ void LocalMapping::ResetIfRequested()
             mbNotBA1 = true;
             mbBadImu=false;
 
+            //^ IMU Initialization 횟수 (디버깅용)
             mIdxInit=0;
 
             cout << "LM: End reseting Local Mapping..." << endl;
         }
-
+        //^ mbResetRequestedActiveMap만 리셋
         if(mbResetRequestedActiveMap) {
             executed_reset = true;
             cout << "LM: Reseting current map in Local Mapping..." << endl;
@@ -1381,6 +1398,8 @@ bool LocalMapping::isFinished()
     unique_lock<mutex> lock(mMutexFinish);
     return mbFinished;
 }
+
+//^
 
 void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 {
