@@ -63,14 +63,16 @@ void LocalMapping::SetTracker(Tracking *pTracker)
 
 void LocalMapping::Run()
 {
-
+    //^ Run
     mbFinished = false;
 
     while(1)
     {
+        //^ Cannot accept keyframe now because LM is busy
         // Tracking will see that Local Mapping is busy
         SetAcceptKeyFrames(false);
 
+        //^ Check if key frames list is empty
         // Check if there are keyframes in the queue
         if(CheckNewKeyFrames() && !mbBadImu)
         {
@@ -81,6 +83,7 @@ void LocalMapping::Run()
 
             std::chrono::steady_clock::time_point time_StartProcessKF = std::chrono::steady_clock::now();
 #endif
+            //^ Keyframe 전처리
             // BoW conversion and insertion in Map
             ProcessNewKeyFrame();
 #ifdef REGISTER_TIMES
@@ -89,7 +92,8 @@ void LocalMapping::Run()
             double timeProcessKF = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndProcessKF - time_StartProcessKF).count();
             vdKFInsert_ms.push_back(timeProcessKF);
 #endif
-
+            //^ mlpRecentAddedMapPoints 정리
+            //^ Redundant Map Points
             // Check recent MapPoints
             MapPointCulling();
 #ifdef REGISTER_TIMES
@@ -98,6 +102,7 @@ void LocalMapping::Run()
             double timeMPCulling = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndMPCulling - time_EndProcessKF).count();
             vdMPCulling_ms.push_back(timeMPCulling);
 #endif
+            //^ MapPoints 생성(in Atlas)
             // Triangulate new MapPoints
             CreateNewMapPoints();
 
@@ -122,8 +127,10 @@ void LocalMapping::Run()
             int num_MPs_BA = 0;
             int num_edges_BA = 0;
 
+            //^ BA
             if(!CheckNewKeyFrames() && !stopRequested())
             {
+                //^ Local BA
                 if(mpAtlas->KeyFramesInMap()>2)
                 {
 
@@ -177,7 +184,7 @@ void LocalMapping::Run()
                 }
 
 #endif
-
+                //^ IMU Initialization
                 // Initialize IMU here
                 if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
                 {
@@ -261,6 +268,7 @@ void LocalMapping::Run()
             vdLMTotal_ms.push_back(timeLocalMap);
 #endif
         }
+        //^ 정지 명령
         else if(Stop() && !mbBadImu)
         {
             // Safe area to stop
@@ -272,17 +280,25 @@ void LocalMapping::Run()
                 break;
         }
 
+        //^ Reset 요청 있었다면 LM에서 사용하는 parameter들 Reset 실행
+        //^ RequestedReset : tracking에서
+        //^ RequestedActiveMapReset : tracking에서
         ResetIfRequested();
 
+        //^ Local mapping done
         // Tracking will see that Local Mapping is busy
         SetAcceptKeyFrames(true);
 
+        //^ Finish 요청 있으면 LM Loop 종료
+        //^ Finish 요청 : system에서 shutdown 일때
         if(CheckFinish())
             break;
 
+        //^ LM 주기
         usleep(3000);
     }
 
+    //^ LM 종료
     SetFinish();
 }
 
