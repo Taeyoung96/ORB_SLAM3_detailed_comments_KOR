@@ -55,7 +55,19 @@ public:
 
     // Thread Synch
     void RequestStop();
+    
+    /* !
+     * @brief  : Local Mapper에 Reset을 요청하는 함수
+     * @param  : None
+     * @return : void
+    */
     void RequestReset();
+    
+    /* !
+     * @brief  : Local Mapper에 Active Map의 Reset을 요청하는 함수
+     * @param  : pMap (reset을 요청할 당시의 Active Current Map)
+     * @return : void
+    */
     void RequestResetActiveMap(Map* pMap);
     bool Stop();
     void Release();
@@ -67,7 +79,18 @@ public:
 
     void InterruptBA();
 
+    /* !
+     * @brief  : Local Mapper의 종료를 요청하는 함수
+     * @param  : None
+     * @return : void
+    */
     void RequestFinish();
+    
+    /* !
+     * @brief  : Local Mapper가 종료되었는지 확인하는 함수
+     * @param  : None
+     * @return : void
+    */
     bool isFinished();
 
     int KeyframesInQueue(){
@@ -150,13 +173,29 @@ protected:
     bool mbMonocular;
     bool mbInertial;
 
+    /* !
+     * @brief  : Reset이 요청되었을 경우, Reset을 실행하는 함수
+     * @param  : None
+     * @return : void
+    */
     void ResetIfRequested();
     bool mbResetRequested;
     bool mbResetRequestedActiveMap;
     Map* mpMapToReset;
     std::mutex mMutexReset;
 
+    /* !
+     * @brief  : Local Mapper가 종료요청을 받았는지 확인하는 함수
+     * @param  : None
+     * @return : void
+    */
     bool CheckFinish();
+    
+    /* !
+     * @brief  : Local Mapper의 종료를 set하는 함수
+     * @param  : None
+     * @return : void
+    */
     void SetFinish();
     bool mbFinishRequested;
     bool mbFinished;

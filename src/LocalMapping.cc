@@ -1278,6 +1278,9 @@ cv::Matx33f LocalMapping::SkewSymmetricMatrix_(const cv::Matx31f &v)
 
 
 //^
+//^ 1. Finish
+//^ 2. Reset
+
 void LocalMapping::RequestReset()
 {
     {
@@ -1305,6 +1308,9 @@ void LocalMapping::RequestResetActiveMap(Map* pMap)
         unique_lock<mutex> lock(mMutexReset);
         cout << "LM: Active map reset recieved" << endl;
         mbResetRequestedActiveMap = true;
+        //^ Tracking의 ResetActiveMap에서 실행
+        //^ pMap : Atlas의 CurrentMap 
+        //^ LocalMapping에서는 이 pMap이 따로 사용되지는 않음.
         mpMapToReset = pMap;
     }
     cout << "LM: Active map reset, waiting..." << endl;
@@ -1323,12 +1329,15 @@ void LocalMapping::RequestResetActiveMap(Map* pMap)
 
 void LocalMapping::ResetIfRequested()
 {
+    //^ Reset이 하는 일
     //^ 1. Inertial parameter 초기화
     //^ 2. mlNewKeyFrames, mlpRecentAddedMapPoints clear
     bool executed_reset = false;
     {
         unique_lock<mutex> lock(mMutexReset);
         //^ mbResetRequested && mbResetRequestedActiveMap 리셋
+        //^ Reset이 요청되면 Local Mapping에서는
+        //^ IMU Initialize, Scale Refinement를 실행하지 않음 (내부 parameter들 Reset되어야 하므로)
         if(mbResetRequested)
         {
             executed_reset = true;
@@ -1352,6 +1361,9 @@ void LocalMapping::ResetIfRequested()
             cout << "LM: End reseting Local Mapping..." << endl;
         }
         //^ mbResetRequestedActiveMap만 리셋
+        //^ ResetActiveMap은 Track Lost일때 진행 된다.
+        //^ *** Active Map은 Tracking에서 incoming frames가 localize 하는 데에 사용되고,
+        //^ *** Local Mapping에서는 Tracking이 완료된 keyframes가 보정되고 active map에 추가된다.
         if(mbResetRequestedActiveMap) {
             executed_reset = true;
             cout << "LM: Reseting current map in Local Mapping..." << endl;
@@ -1418,7 +1430,6 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
         minTime = 1.0;
         nMinKF = 10;
     }
-
 
     if(mpAtlas->KeyFramesInMap()<nMinKF)
         return;
