@@ -1277,9 +1277,19 @@ cv::Matx33f LocalMapping::SkewSymmetricMatrix_(const cv::Matx31f &v)
 }
 
 
-//^
-//^ 1. Finish
-//^ 2. Reset
+//^ Local Mapping 3가지 종류의 Control Flag
+//^ 1. Finish : Local Mapper의 종료 (-> System에서 Shutdown 호출 시 Local Mapper Finish) 
+//^ 2. Stop   : Local Mapper의 Run이 멈추어야 할 때
+//^     1) Localization Mode일 때 : Map을 더 생성해야할 필요가 없으므로 Local Mapper 사용 X (Only Tracking)
+//^     2) Map에 대한 최적화 진행할 때 
+//^       - Corret Loop 일 때  : 전체 Map에 대해서 Loop Closing 시 새로운 Keyframe들이 들어오는 것을 막기 위해
+//^       - MergeLocal 일 때   : Local Map merge 한 후 Map에 대해 최적화 할 때 새로운 Keyframe들이 들어오는 것을 막기 위해 
+//^       - GlobalBA 실행될 때 : Global bundle adjustment 시 새로운 Keyframe들이 들어오는 것을 막기 위해
+//^ 3. Reset  : Local Mapper 초기화
+//^     1) Reset : 시스템 처음 실행 시, 1회 호출 (TrackMonocular, TrackStereo, TrackRGBD)
+//^     2) ResetActiveMap : 시스템 Running 중에 Local Mapper의 초기화가 필요할 때 마다 호출
+//^         - System의 ChangeDataset()이 호출될 때 -> offline SLAM일 때 image sequence 들어올 때마다 
+//^         - Tracking에서 TRACK_LOST 될 때 
 
 void LocalMapping::RequestReset()
 {
