@@ -27,6 +27,8 @@
 #include<mutex>
 #include<chrono>
 
+
+
 namespace ORB_SLAM3
 {
 
@@ -63,14 +65,17 @@ void LocalMapping::SetTracker(Tracking *pTracker)
 
 void LocalMapping::Run()
 {
-
+    //^ Run
+    //^ mbFinished : While 문을 돌고 있는지 아닌지를 체크하는 Flag 
     mbFinished = false;
 
     while(1)
     {
+        //^ Cannot accept keyframe now because LM is busy
         // Tracking will see that Local Mapping is busy
         SetAcceptKeyFrames(false);
 
+        //^ Check if key frames list is empty
         // Check if there are keyframes in the queue
         if(CheckNewKeyFrames() && !mbBadImu)
         {
@@ -81,6 +86,7 @@ void LocalMapping::Run()
 
             std::chrono::steady_clock::time_point time_StartProcessKF = std::chrono::steady_clock::now();
 #endif
+            //^ Keyframe 전처리
             // BoW conversion and insertion in Map
             ProcessNewKeyFrame();
 #ifdef REGISTER_TIMES
@@ -89,7 +95,8 @@ void LocalMapping::Run()
             double timeProcessKF = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndProcessKF - time_StartProcessKF).count();
             vdKFInsert_ms.push_back(timeProcessKF);
 #endif
-
+            //^ mlpRecentAddedMapPoints 정리
+            //^ Redundant Map Points
             // Check recent MapPoints
             MapPointCulling();
 #ifdef REGISTER_TIMES
@@ -98,6 +105,7 @@ void LocalMapping::Run()
             double timeMPCulling = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndMPCulling - time_EndProcessKF).count();
             vdMPCulling_ms.push_back(timeMPCulling);
 #endif
+            //^ MapPoints 생성(in Atlas)
             // Triangulate new MapPoints
             CreateNewMapPoints();
 
@@ -122,8 +130,10 @@ void LocalMapping::Run()
             int num_MPs_BA = 0;
             int num_edges_BA = 0;
 
+            //^ BA
             if(!CheckNewKeyFrames() && !stopRequested())
             {
+                //^ Local BA
                 if(mpAtlas->KeyFramesInMap()>2)
                 {
 
@@ -177,7 +187,7 @@ void LocalMapping::Run()
                 }
 
 #endif
-
+                //^ IMU Initialization
                 // Initialize IMU here
                 if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
                 {
@@ -261,28 +271,46 @@ void LocalMapping::Run()
             vdLMTotal_ms.push_back(timeLocalMap);
 #endif
         }
+        //^ mlNewKeyFrames가 없을 때
+        //^ Stop request가 왔는지 체크
         else if(Stop() && !mbBadImu)
         {
             // Safe area to stop
+            //^ Stop 요청이 오면 stop이 풀릴 떄까지(mLocalMapper->Release()가 호출될 때까지)
+            //^ 대기
+            //^ 예시 : LoopClosing -> CorrectLoop()
             while(isStopped() && !CheckFinish())
             {
                 usleep(3000);
             }
+            
+            //^ finish request가 왔으면 전체 while 문 out
             if(CheckFinish())
                 break;
         }
 
+        //^ Reset 요청 있었다면 LM에서 사용하는 parameter들 Reset 실행
+        //^ RequestedReset : tracking에서
+        //^ RequestedActiveMapReset : tracking에서
         ResetIfRequested();
 
+        //^ Local mapping done
         // Tracking will see that Local Mapping is busy
         SetAcceptKeyFrames(true);
 
+        //^ Finish 요청 있으면 LM Loop 종료
+        //^ Finish 요청 : system에서 shutdown 일때
         if(CheckFinish())
             break;
 
+        //^ LM 주기
         usleep(3000);
     }
 
+    //^ Stop : while 문 내에서 잠시 대기
+    //^ Finish : while 문을 벗어남( = shutdown)
+
+    //^ LM 종료
     SetFinish();
 }
 
@@ -292,7 +320,6 @@ void LocalMapping::InsertKeyFrame(KeyFrame *pKF)
     mlNewKeyFrames.push_back(pKF);
     mbAbortBA=true;
 }
-
 
 bool LocalMapping::CheckNewKeyFrames()
 {
@@ -853,7 +880,6 @@ void LocalMapping::CreateNewMapPoints()
     }
 }
 
-
 void LocalMapping::SearchInNeighbors()
 {
     // Retrieve neighbor keyframes
@@ -1250,6 +1276,21 @@ cv::Matx33f LocalMapping::SkewSymmetricMatrix_(const cv::Matx31f &v)
     return skew;
 }
 
+
+//^ Local Mapping 3가지 종류의 Control Flag
+//^ 1. Finish : Local Mapper의 종료 (-> System에서 Shutdown 호출 시 Local Mapper Finish) 
+//^ 2. Stop   : Local Mapper의 Run이 멈추어야 할 때
+//^     1) Localization Mode일 때 : Map을 더 생성해야할 필요가 없으므로 Local Mapper 사용 X (Only Tracking)
+//^     2) Map에 대한 최적화 진행할 때 
+//^       - Corret Loop 일 때  : 전체 Map에 대해서 Loop Closing 시 새로운 Keyframe들이 들어오는 것을 막기 위해
+//^       - MergeLocal 일 때   : Local Map merge 한 후 Map에 대해 최적화 할 때 새로운 Keyframe들이 들어오는 것을 막기 위해 
+//^       - GlobalBA 실행될 때 : Global bundle adjustment 시 새로운 Keyframe들이 들어오는 것을 막기 위해
+//^ 3. Reset  : Local Mapper 초기화
+//^     1) Reset : 시스템 처음 실행 시, 1회 호출 (TrackMonocular, TrackStereo, TrackRGBD)
+//^     2) ResetActiveMap : 시스템 Running 중에 Local Mapper의 초기화가 필요할 때 마다 호출
+//^         - System의 ChangeDataset()이 호출될 때 -> offline SLAM일 때 image sequence 들어올 때마다 
+//^         - Tracking에서 TRACK_LOST 될 때 
+
 void LocalMapping::RequestReset()
 {
     {
@@ -1277,6 +1318,9 @@ void LocalMapping::RequestResetActiveMap(Map* pMap)
         unique_lock<mutex> lock(mMutexReset);
         cout << "LM: Active map reset recieved" << endl;
         mbResetRequestedActiveMap = true;
+        //^ Tracking의 ResetActiveMap에서 실행
+        //^ pMap : Atlas의 CurrentMap 
+        //^ LocalMapping에서는 이 pMap이 따로 사용되지는 않음.
         mpMapToReset = pMap;
     }
     cout << "LM: Active map reset, waiting..." << endl;
@@ -1295,14 +1339,21 @@ void LocalMapping::RequestResetActiveMap(Map* pMap)
 
 void LocalMapping::ResetIfRequested()
 {
+    //^ Reset이 하는 일
+    //^ 1. Inertial parameter 초기화
+    //^ 2. mlNewKeyFrames, mlpRecentAddedMapPoints clear
     bool executed_reset = false;
     {
         unique_lock<mutex> lock(mMutexReset);
+        //^ mbResetRequested && mbResetRequestedActiveMap 리셋
+        //^ Reset이 요청되면 Local Mapping에서는
+        //^ IMU Initialize, Scale Refinement를 실행하지 않음 (내부 parameter들 Reset되어야 하므로)
         if(mbResetRequested)
         {
             executed_reset = true;
 
             cout << "LM: Reseting Atlas in Local Mapping..." << endl;
+            
             mlNewKeyFrames.clear();
             mlpRecentAddedMapPoints.clear();
             mbResetRequested=false;
@@ -1314,11 +1365,15 @@ void LocalMapping::ResetIfRequested()
             mbNotBA1 = true;
             mbBadImu=false;
 
+            //^ IMU Initialization 횟수 (디버깅용)
             mIdxInit=0;
 
             cout << "LM: End reseting Local Mapping..." << endl;
         }
-
+        //^ mbResetRequestedActiveMap만 리셋
+        //^ ResetActiveMap은 Track Lost일때 진행 된다.
+        //^ *** Active Map은 Tracking에서 incoming frames가 localize 하는 데에 사용되고,
+        //^ *** Local Mapping에서는 Tracking이 완료된 keyframes가 보정되고 active map에 추가된다.
         if(mbResetRequestedActiveMap) {
             executed_reset = true;
             cout << "LM: Reseting current map in Local Mapping..." << endl;
@@ -1366,6 +1421,8 @@ bool LocalMapping::isFinished()
     return mbFinished;
 }
 
+//^
+
 void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 {
     if (mbResetRequested)
@@ -1383,7 +1440,6 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
         minTime = 1.0;
         nMinKF = 10;
     }
-
 
     if(mpAtlas->KeyFramesInMap()<nMinKF)
         return;
