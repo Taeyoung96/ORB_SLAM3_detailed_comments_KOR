@@ -1421,170 +1421,200 @@ bool LocalMapping::isFinished()
     return mbFinished;
 }
 
-//^
-
 void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 {
-    if (mbResetRequested)
-        return;
+    if (mbResetRequested)   // Map Reset이 Request된 경우
+        return;     // InitialzieIMU 수행 끝
 
-    float minTime;
-    int nMinKF;
-    if (mbMonocular)
+    float minTime;  // 최소 TimeStamp 차이 (시간 차이)
+    int nMinKF;     // 최소 Key Frame의 갯수
+
+    if (mbMonocular)    // Monocular 모드일 경우
     {
-        minTime = 2.0;
+        minTime = 2.0;  // 2s (Unix Time 변환 : https://www.epochconverter.com/)
         nMinKF = 10;
     }
-    else
+    else    // Stereo 모드일 경우
     {
-        minTime = 1.0;
+        minTime = 1.0;  // 1s
         nMinKF = 10;
     }
 
-    if(mpAtlas->KeyFramesInMap()<nMinKF)
-        return;
+    if(mpAtlas->KeyFramesInMap()<nMinKF)    // Map에 존재하는 Key Frame의 갯수가 nMinKF보다 작을 경우
+        return;    // InitialzieIMU 수행 끝
 
     // Retrieve all keyframe in temporal order
-    list<KeyFrame*> lpKF;
+    list<KeyFrame*> lpKF;   // KeyFrame을 List로 담을 변수 선언
     KeyFrame* pKF = mpCurrentKeyFrame;
-    while(pKF->mPrevKF)
+    while(pKF->mPrevKF) // 이전 KeyFrame이 존재할 때 계속 수행
     {
         lpKF.push_front(pKF);
         pKF = pKF->mPrevKF;
     }
     lpKF.push_front(pKF);
-    vector<KeyFrame*> vpKF(lpKF.begin(),lpKF.end());
+    vector<KeyFrame*> vpKF(lpKF.begin(),lpKF.end());    // list에 담을 KeyFrame을 Vector 자료구조를 이용해서 담는다.
 
-    if(vpKF.size()<nMinKF)
-        return;
+    if(vpKF.size()<nMinKF)  // vpKF의 갯수가 최소 KeyFrame의 갯수보다 작을 경우
+        return;     // InitialzieIMU 수행 끝
 
-    mFirstTs=vpKF.front()->mTimeStamp;
-    if(mpCurrentKeyFrame->mTimeStamp-mFirstTs<minTime)
-        return;
+    mFirstTs=vpKF.front()->mTimeStamp;  
+    // 가장 첫번째 KeyFrame (Current Key Frame에서 가장 먼 TimeStamp를 가진 KeyFrame)의 TimeStamp를 가져온다.
 
-    bInitializing = true;
+    if(mpCurrentKeyFrame->mTimeStamp-mFirstTs<minTime)  // Current KeyFrame의 TimeStamp와 첫번째 TimeStamp의 차이가 minTime이하 일 경우
+    // KeyFrame 간 TimeStamp가 얼마 안 떨어졌을 경우
+        return;     // InitialzieIMU 수행 끝
 
-    while(CheckNewKeyFrames())
+    // bInitializing = true로 바뀌기전에 함수를 빠져 나온다는 것은 InitialzieIMU를 수행하지 못했다는 뜻으로 해석
+    // InitializeIMU를 본격적으로 수행
+
+    bInitializing = true;   // Initializing 변수를 true로 바꿈 (초기화중임을 알려주는 변수)
+
+    while(CheckNewKeyFrames())  // 새로운 KeyFrame이 있는지 검사 (mlNewKeyFrames가 empty일 때 까지)
     {
-        ProcessNewKeyFrame();
-        vpKF.push_back(mpCurrentKeyFrame);
-        lpKF.push_back(mpCurrentKeyFrame);
+        ProcessNewKeyFrame();   // mlNewKeyFrames의 첫번째 원소를 mpCurrentKeyFrame으로 대입
+        vpKF.push_back(mpCurrentKeyFrame);  // mpCurrentKeyFrame을 vpKF에 push_back
+        lpKF.push_back(mpCurrentKeyFrame);  // mpCurrentKeyFrame을 lpKF에 push_back
     }
 
-    const int N = vpKF.size();
-    IMU::Bias b(0,0,0,0,0,0);
+    const int N = vpKF.size();  // KeyFrame의 갯수를 N으로 선언
+    IMU::Bias b(0,0,0,0,0,0);   // IMU bias값 초기화
 
     // Compute and KF velocities mRwg estimation
     if (!mpCurrentKeyFrame->GetMap()->isImuInitialized())
+    // Current Key Frame의 Map이 IMU Initialize가 안되어 있을 경우
     {
-        cv::Mat cvRwg;
-        cv::Mat dirG = cv::Mat::zeros(3,1,CV_32F);
-        for(vector<KeyFrame*>::iterator itKF = vpKF.begin(); itKF!=vpKF.end(); itKF++)
+        // 참고하면 좋은 그림 - 해당 논문 Figure 1 : https://www.mdpi.com/2072-4292/12/18/3048/html
+
+        cv::Mat cvRwg;  // Rotation Matrix (Gravity -> World) - if문 안에서 구하려고 하는 것
+        cv::Mat dirG = cv::Mat::zeros(3,1,CV_32F);  // direction Gravity - 월드 좌표계에서 봤을 때 중력의 방향
+        for(vector<KeyFrame*>::iterator itKF = vpKF.begin(); itKF!=vpKF.end(); itKF++)  // Key Frame을 for문 이용해서 순회
         {
-            if (!(*itKF)->mpImuPreintegrated)
+            if (!(*itKF)->mpImuPreintegrated)   // Imu Preintegrated가 처리 되어 있지 않으면
                 continue;
-            if (!(*itKF)->mPrevKF)
+            if (!(*itKF)->mPrevKF)  // 이전 Key Frame이 존재 하지 않으면
                 continue;
 
             dirG -= (*itKF)->mPrevKF->GetImuRotation()*(*itKF)->mpImuPreintegrated->GetUpdatedDeltaVelocity();
+            // for문을 활영하여 IMU preintegrated 되어 있는 속도 값을 누적 >> Direction 값을 얻어냄
+            // 속도 변화량, -는 중력방향
             cv::Mat _vel = ((*itKF)->GetImuPosition() - (*itKF)->mPrevKF->GetImuPosition())/(*itKF)->mpImuPreintegrated->dT;
-            (*itKF)->SetVelocity(_vel);
-            (*itKF)->mPrevKF->SetVelocity(_vel);
+            // velocity = (Key Frame의 IMU position과 이전 Key Frame의 IMU position) / 시간의 변화량
+            
+            // IMU 속도 = Key Frame의 속도
+            (*itKF)->SetVelocity(_vel); // Key Frame의 Velocity 설정
+            (*itKF)->mPrevKF->SetVelocity(_vel);    // 이전 Key Frame의 Velocity 설정
         }
 
-        dirG = dirG/cv::norm(dirG);
-        cv::Mat gI = (cv::Mat_<float>(3,1) << 0.0f, 0.0f, -1.0f);
-        cv::Mat v = gI.cross(dirG);
-        const float nv = cv::norm(v);
-        const float cosg = gI.dot(dirG);
-        const float ang = acos(cosg);
-        cv::Mat vzg = v*ang/nv;
+        // Gravity와 World의 Rotation Matrix를 구하기 위한 과정
+        dirG = dirG/cv::norm(dirG); // unit vector로 만들기
+        cv::Mat gI = (cv::Mat_<float>(3,1) << 0.0f, 0.0f, -1.0f);   // World Coordinate gravity vector (z방향으로 -1)
+        cv::Mat v = gI.cross(dirG);     
+        const float nv = cv::norm(v);   
+        const float cosg = gI.dot(dirG);    
+        const float ang = acos(cosg);   // gI랑 diG가 이루는 Angle (Radian)
+        cv::Mat vzg = v*ang/nv; 
         cvRwg = IMU::ExpSO3(vzg);
         mRwg = Converter::toMatrix3d(cvRwg);
-        mTinit = mpCurrentKeyFrame->mTimeStamp-mFirstTs;
+        mTinit = mpCurrentKeyFrame->mTimeStamp-mFirstTs;    // TimeStamp 차이를 활용하여 Tinit 계산
     }
-    else
+    else    //  Current Key Frame의 Map이 IMU Initialize가 되어 있을 경우
     {
-        mRwg = Eigen::Matrix3d::Identity();
-        mbg = Converter::toVector3d(mpCurrentKeyFrame->GetGyroBias());
-        mba = Converter::toVector3d(mpCurrentKeyFrame->GetAccBias());
+        mRwg = Eigen::Matrix3d::Identity(); // 단위행렬 - 회전이 없다
+        mbg = Converter::toVector3d(mpCurrentKeyFrame->GetGyroBias());  // Gyro Bias 값을 대입
+        mba = Converter::toVector3d(mpCurrentKeyFrame->GetAccBias());   // Acc Bias 값을 대입
     }
 
     mScale=1.0;
 
     mInitTime = mpTracker->mLastFrame.mTimeStamp-vpKF.front()->mTimeStamp;
+    // 초기화함수 선언 (딱히 쓰이는 곳은 없음)
 
-    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();    // 현재 시간 측정
     Optimizer::InertialOptimization(mpAtlas->GetCurrentMap(), mRwg, mScale, mbg, mba, mbMonocular, infoInertial, false, false, priorG, priorA);
-    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+    // Optimizer::InertialOptimization() 중 첫번째 함수
+    // Inertial Optimization으로 Key Frame의 Pose, KeyFrame에 새로운 velocities and IMU biases, Scale값도 다시 계산
+    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();    // 현재 시간 측정 
 
-    if (mScale<1e-1)
+    if (mScale<1e-1)    // mScale값이 1/10 이하면
     {
         cout << "scale too small" << endl;
-        bInitializing=false;
-        return;
+        bInitializing=false;    // InitializeIMU 수행 끝
+        return; // InitializeIMU 함수 반환
     }
-
-
 
     // Before this line we are not changing the map
+    // 다음 Line부터 IMU Initialize를 통해 map point들이 수정될 수 있다.
 
     unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
-    std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-    if ((fabs(mScale-1.f)>0.00001)||!mbMonocular)
+    std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();    // 현재 시간 측정 
+    if ((fabs(mScale-1.f)>0.00001)||!mbMonocular)   // fabs()는 절대값 구하는 함수
+    // Scale 값이 1.0 근처가 아니거나 Stereo Mode, Stereo-Inertial 모드일 경우
     {
+        // Updated Scale값을 Atlas Map에 적용
         mpAtlas->GetCurrentMap()->ApplyScaledRotation(Converter::toCvMat(mRwg).t(),mScale,true);
+        // Updated Scale값을 Tracking에 적용
         mpTracker->UpdateFrameIMU(mScale,vpKF[0]->GetImuBias(),mpCurrentKeyFrame);
     }
-    std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();    // 현재 시간 측정 
 
     // Check if initialization OK
-    if (!mpAtlas->isImuInitialized())
-        for(int i=0;i<N;i++)
+    // IMU Initialization에 대한 bool type을 true로 바꿔줌 (IMU Initialization을 수행 중이므로)
+    if (!mpAtlas->isImuInitialized()) // Atlas에 IMU 초기화가 되어 있지 않다면
+        for(int i=0;i<N;i++)    // KeyFrame의 갯수만큼 for문
         {
             KeyFrame* pKF2 = vpKF[i];
-            pKF2->bImu = true;
+            pKF2->bImu = true;  // KeyFrame마다 IMU에 대한 bool type을 true로 바꿔줌
         }
 
-    std::chrono::steady_clock::time_point t4 = std::chrono::steady_clock::now();
-    if (bFIBA)
+    std::chrono::steady_clock::time_point t4 = std::chrono::steady_clock::now();    // 현재 시간 측정 
+    if (bFIBA)  // FIBA - Full Inertial BA의 줄임말 
     {
-        if (priorA!=0.f)
+        if (priorA!=0.f)    // 이전 Acc의 값이 0이 아니라면
             Optimizer::FullInertialBA(mpAtlas->GetCurrentMap(), 100, false, 0, NULL, true, priorG, priorA);
-        else
+            // Full Inertial Bundle Adjustment로 Camera pose, Camera velocity, Map point, IMU bias 값을 Update
+        else    // 이전 Acc의 값이 0이면
             Optimizer::FullInertialBA(mpAtlas->GetCurrentMap(), 100, false, 0, NULL, false);
+            // Full Inertial Bundle Adjustment로 Camera pose, Camera velocity, Map point, IMU bias 값을 Update
     }
 
-    std::chrono::steady_clock::time_point t5 = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point t5 = std::chrono::steady_clock::now();    // 현재 시간 측정 
 
-    // If initialization is OK
-    mpTracker->UpdateFrameIMU(1.0,vpKF[0]->GetImuBias(),mpCurrentKeyFrame);
-    if (!mpAtlas->isImuInitialized())
+    // If initialization is OK - 초기화를 모두 진행 했다면
+
+    mpTracker->UpdateFrameIMU(1.0,vpKF[0]->GetImuBias(),mpCurrentKeyFrame); 
+    // Tracking의 IMU Frame을 Current Key Frame으로 update
+
+    if (!mpAtlas->isImuInitialized())   // Atlas에 IMU 초기화가 되어 있지 않다면
     {
         cout << "IMU in Map " << mpAtlas->GetCurrentMap()->GetId() << " is initialized" << endl;
+        // Current Map의 ID를 활용하여 IMU 초기화를 진행
         mpAtlas->SetImuInitialized();
-        mpTracker->t0IMU = mpTracker->mCurrentFrame.mTimeStamp;
+        // Atlas에 IMU 초기화를 진행
+        mpTracker->t0IMU = mpTracker->mCurrentFrame.mTimeStamp; 
+        // time-stamp of IMU initialization를 Current Frame의 TimeStamp를 활용
         mpCurrentKeyFrame->bImu = true;
+        // Current Key Frame의 IMU에 대한 변수를 true로 선언
     }
 
-
-    mbNewInit=true;
-    mnKFs=vpKF.size();
-    mIdxInit++;
+    mbNewInit=true;     // 새로운 Init이라는 것을 알려주는 변수 (딱히 쓰이지는 않음)
+    mnKFs=vpKF.size();  // KeyFrame의 갯수를 vpKF의 갯수를 대입
+    mIdxInit++; // 초기화 진행 Index Update
 
     for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++)
     {
-        (*lit)->SetBadFlag();
-        delete *lit;
+        (*lit)->SetBadFlag();   // Key Frame을 제거하기전 KeyFrame에 대한 Graph 관계에 대한 초기화 과정을 진행 - 삭제를 하므로
+        delete *lit;    // KeyFrame을 삭제
     }
-    mlNewKeyFrames.clear();
 
-    mpTracker->mState=Tracking::OK;
-    bInitializing = false;
+    mlNewKeyFrames.clear(); // mlNewKeyFrames Clear로 초기화
 
-    mpCurrentKeyFrame->GetMap()->IncreaseChangeIndex();
+    mpTracker->mState=Tracking::OK;     // Tracking의 현재 state를 OK로 바꿈 
+    bInitializing = false;  // InitializeIMU 수행 끝 
 
-    return;
+    mpCurrentKeyFrame->GetMap()->IncreaseChangeIndex(); 
+    // Current Key Frame의 Map이 바뀌었다는 알려주는 mnMapChange 변수 Index를 1 증가
+
+    return; // InitializeIMU 함수 반환
 }
 
 void LocalMapping::ScaleRefinement()

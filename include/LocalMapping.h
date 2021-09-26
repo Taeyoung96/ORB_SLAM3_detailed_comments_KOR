@@ -224,7 +224,15 @@ protected:
     bool mbAcceptKeyFrames;
     std::mutex mMutexAccept;
 
+    /* !
+    * @brief IMU를 활용하여 Initialize를 수행, 카메라 포즈 및 카메라 속도 추정, Map point 최적화
+    * @param priorG 이전 Gyro  
+    * @param priorA 이전 Acc
+    * @param bFIBA Full Inertial Bundle Adjustment에 대한 bool type
+    * @return None
+    */
     void InitializeIMU(float priorG = 1e2, float priorA = 1e6, bool bFirst = false);
+    
     void ScaleRefinement();
 
     bool bInitializing;
