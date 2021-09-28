@@ -12,9 +12,9 @@
 - `BA`는 `Bundle Adjustment`의 줄임말입니다.  
 - `MP`는 `Map Point`의 줄임말입니다.  
 
-- Rotation Matrix, Translation Matrix의 경우 Naming을 할 때, 뒤 좌표계에서 앞 좌표계의 변환으로 Naming합니다.  
+- Rotation Matrix, Translation Vector의 경우 Naming을 할 때, 뒤 좌표계에서 앞 좌표계의 변환으로 Naming합니다.  
   예를 들어 `Tcw`의 경우, `w`는 world를 의미하고 `c`는 camera를 의미합니다.  
-  따라서 월드 좌표계에서 카메라 좌표계로 Translation Matrix를 의미합니다.  
+  따라서 월드 좌표계에서 카메라 좌표계로 Translation Vector를 의미합니다.  
   또한 `Rwg`의 경우, `w`는 world를 의미하고 `g`는 gyro를 의미합니다.  
   따라서 Gyro 좌표계에서 월드 좌표계로 Rotation Matrix를 의미합니다.  
   
