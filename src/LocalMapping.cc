@@ -344,6 +344,8 @@ void LocalMapping::ProcessNewKeyFrame()
 
 void LocalMapping::EmptyQueue()
 {
+    //CheckNewKeyFrame( !mlNewKeyFrames.empty() 반환 ) while문 수행
+    // ProcessNewKeyFrame 수행
     while(CheckNewKeyFrames())
         ProcessNewKeyFrame();
 }
@@ -351,9 +353,13 @@ void LocalMapping::EmptyQueue()
 void LocalMapping::MapPointCulling()
 {
     // Check Recent Added MapPoints
+    // lit = mlpRecentAddedMapPoints의 시작 index
+    // CurrentKFid = mpCurrentKeyFrame ID
     list<MapPoint*>::iterator lit = mlpRecentAddedMapPoints.begin();
     const unsigned long int nCurrentKFid = mpCurrentKeyFrame->mnId;
 
+    // nThObs = mbMonocular인 경우 2, 그 외에는 3
+    // cnThObs = nThObs를 const 형태로 저장
     int nThObs;
     if(mbMonocular)
         nThObs = 2;
@@ -361,7 +367,32 @@ void LocalMapping::MapPointCulling()
         nThObs = 3;
     const int cnThObs = nThObs;
 
+    // borrar = mlpRecentAddedMapPoints의 사이즈를 저장
     int borrar = mlpRecentAddedMapPoints.size();
+
+    // lit이 mlpRecentAddedMapPoints의 마지막 index가 될떄까지  while문 수행
+
+
+    // *pMP = lit의 포인터 저장
+    // pMP의 조건에 따라서 pMP와 lit 재정의
+    // 1. pMP가 isBad인 경우
+    // -- 현재의 mlpRecentAddedMapPoints를 지우고 그 다음 index 반환
+
+    // 2. pMP의 GetFoundRatio가 0.25f
+    // -- GetFoundRatio = mnFound/mnVisible
+    // -- pMP를 SetBadFlag로 설정
+    // -- 현재의 mlpRecentAddedMapPoints를 지우고 그 다음 index 반환
+
+    // 3. CurrentKFid와 pMP의 mnFisrtKFid의 차이가 2 이상인 경우 && pMP의 Observations이 cnThObs보다 작은경우
+    // -- pMP를 SetBadFlag로 설정
+    // -- 현재의 mlpRecentAddedMapPoints를 지우고 그 다음 index 반환
+
+    // 4. CurrentKFid와 pMP의 mnFisrtKFid의 차이가 3 이상인 경우
+    // -- 현재의 mlpRecentAddedMapPoints를 지우고 그 다음 index 반환
+
+    // 5. 그 이외 경우
+    // lit 증가
+    // borrar 감소
 
     while(lit!=mlpRecentAddedMapPoints.end())
     {
@@ -389,7 +420,6 @@ void LocalMapping::MapPointCulling()
     }
     //cout << "erase MP: " << borrar << endl;
 }
-
 void LocalMapping::CreateNewMapPoints()
 {
     // Stereo인 경우
