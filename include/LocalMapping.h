@@ -51,22 +51,28 @@ public:
     void Run();
 
     void InsertKeyFrame(KeyFrame* pKF);
+
+    /* !
+     * @brief mlNewKeyFrames에 데이터가 없애기 위해 사용하는 함수 (Current Key Frame에 mlNewKeyFrames의 첫번째 원소를 계속 대입)
+     * @param None
+     * @return void
+    */
     void EmptyQueue();
 
     // Thread Synch
     void RequestStop();
     
     /* !
-     * @brief  : Local Mapper에 Reset을 요청하는 함수
-     * @param  : None
-     * @return : void
+     * @brief Local Mapper에 Reset을 요청하는 함수
+     * @param None
+     * @return void
     */
     void RequestReset();
     
     /* !
-     * @brief  : Local Mapper에 Active Map의 Reset을 요청하는 함수
-     * @param  : pMap (reset을 요청할 당시의 Active Current Map)
-     * @return : void
+     * @brief Local Mapper에 Active Map의 Reset을 요청하는 함수
+     * @param pMap (reset을 요청할 당시의 Active Current Map)
+     * @return void
     */
     void RequestResetActiveMap(Map* pMap);
     bool Stop();
@@ -80,16 +86,16 @@ public:
     void InterruptBA();
 
     /* !
-     * @brief  : Local Mapper의 종료를 요청하는 함수
-     * @param  : None
-     * @return : void
+     * @brief Local Mapper의 종료를 요청하는 함수
+     * @param None
+     * @return void
     */
     void RequestFinish();
     
     /* !
-     * @brief  : Local Mapper가 종료되었는지 확인하는 함수
-     * @param  : None
-     * @return : void
+     * @brief Local Mapper가 종료되었는지 확인하는 함수
+     * @param None
+     * @return void
     */
     bool isFinished();
 
@@ -155,9 +161,16 @@ protected:
     * @brief Current KeyFrame을 기준으로 인접한 Keyframe을 이용하여 triangulation을 수행하여 3D point를 생성하고
     *        Atlas-map과 current-map 객체에 3D point를 등록
     *        사용되는 위치: LocalMapping::Run();
+    * @param None
+    * @return void
     */
     void CreateNewMapPoints();
 
+    /* !
+     * @brief mlpRecentAddedMapPoints의 담겨있는 Map point의 상태를 확안 후, 조건에 맞지 않는 Map point를 걸러내기 위한 함수
+     * @param None
+     * @return void
+    */
     void MapPointCulling();
     void SearchInNeighbors();
     void KeyFrameCulling();
@@ -174,9 +187,9 @@ protected:
     bool mbInertial;
 
     /* !
-     * @brief  : Reset이 요청되었을 경우, Reset을 실행하는 함수
-     * @param  : None
-     * @return : void
+     * @brief Reset이 요청되었을 경우, Reset을 실행하는 함수
+     * @param None
+     * @return void
     */
     void ResetIfRequested();
     bool mbResetRequested;
@@ -185,16 +198,16 @@ protected:
     std::mutex mMutexReset;
 
     /* !
-     * @brief  : Local Mapper가 종료요청을 받았는지 확인하는 함수
-     * @param  : None
-     * @return : void
+     * @brief Local Mapper가 종료요청을 받았는지 확인하는 함수
+     * @param None
+     * @return void
     */
     bool CheckFinish();
     
     /* !
-     * @brief  : Local Mapper의 종료를 set하는 함수
-     * @param  : None
-     * @return : void
+     * @brief Local Mapper의 종료를 set하는 함수
+     * @param None
+     * @return void
     */
     void SetFinish();
     bool mbFinishRequested;
