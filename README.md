@@ -28,6 +28,7 @@ Contribute를 진행하기 전 [CONTRIBUTING.md](https://github.com/Taeyoung96/O
 |evaluation|ORB SLAM3를 활용한 Visual-Inertial trajectory와 </br> Groundtruth를 비교할 수 있는 코드가 담겨 있는 폴더| 
 |include|ORB SLAM3 관련 헤더파일이 담겨 있는 폴더|
 |src|ORB SLAM3 관련 소스파일이 담겨 있는 폴더|  
+|Supplementary </br> material|ORB SLAM3 발표를 할 때 사용한 자료를 모아둔 폴더|  
 
 ## ORB SLAM3 Code CheatSheet  
 
