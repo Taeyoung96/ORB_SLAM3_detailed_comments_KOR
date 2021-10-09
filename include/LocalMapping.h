@@ -173,12 +173,29 @@ protected:
     */
     void MapPointCulling();
     void SearchInNeighbors();
+
+    /* !
+     * @brief 중복되는 Key Frame을 제거 및 골라내기 위한 함수
+     * @param None
+     * @return void
+    */
     void KeyFrameCulling();
 
     cv::Mat ComputeF12(KeyFrame* &pKF1, KeyFrame* &pKF2);
     cv::Matx33f ComputeF12_(KeyFrame* &pKF1, KeyFrame* &pKF2);
 
+    /* !
+    * @brief SkeySymmetricMatrix를 만들어 주는 함수 (위키백과 : https://ko.wikipedia.org/wiki/%EB%B0%98%EB%8C%80%EC%B9%AD_%ED%96%89%EB%A0%AC)
+    * @param 3x1인 Matrix
+    * @return 3x3 반대칭 행렬
+    */
     cv::Mat SkewSymmetricMatrix(const cv::Mat &v);
+
+    /* !
+    * @brief SkeySymmetricMatrix를 만들어 주는 함수 (위키백과 : https://ko.wikipedia.org/wiki/%EB%B0%98%EB%8C%80%EC%B9%AD_%ED%96%89%EB%A0%AC)
+    * @param 3x1인 Matrix
+    * @return 3x3 반대칭 행렬 (Output의 Type이 다름)
+    */
     cv::Matx33f SkewSymmetricMatrix_(const cv::Matx31f &v);
 
     System *mpSystem;

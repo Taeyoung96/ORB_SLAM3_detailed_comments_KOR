@@ -447,6 +447,7 @@ void LocalMapping::MapPointCulling()
     }
     //cout << "erase MP: " << borrar << endl;
 }
+
 void LocalMapping::CreateNewMapPoints()
 {
     // Stereo인 경우
@@ -1141,78 +1142,111 @@ void LocalMapping::KeyFrameCulling()
     // A keyframe is considered redundant if the 90% of the MapPoints it sees, are seen
     // in at least other 3 keyframes (in the same or finer scale)
     // We only consider close stereo points
+
+    // Local Keyframes에서 중복되는 Keyframes가 있는지 체크합니다.  
+    // 표시되는 MapPoint의 90%가 다른 3개 이상의 키프레임
+    // (동일하거나 더 미세한 크기)에서 표시되는 경우 키프레임은 중복된 것으로 간주됩니다.
+    // 가까운 스테레오 points에 대해서만 고려합니다.
+
     const int Nd = 21; // This should be the same than that one from LIBA
-    mpCurrentKeyFrame->UpdateBestCovisibles();
-    vector<KeyFrame*> vpLocalKeyFrames = mpCurrentKeyFrame->GetVectorCovisibleKeyFrames();
+    // LIBA는 Local Inertial Bundle Adjustment의 줄임말.
+    // LIBA와 같은 KeyFrame의 갯수로 초기화
 
-    float redundant_th;
-    if(!mbInertial)
-        redundant_th = 0.9;
-    else if (mbMonocular)
-        redundant_th = 0.9;
-    else
-        redundant_th = 0.5;
+    mpCurrentKeyFrame->UpdateBestCovisibles();  // KeyFrame간의 관계를 Update (KeyFrames와 Weights를 Update)
 
-    const bool bInitImu = mpAtlas->isImuInitialized();
-    int count=0;
+    vector<KeyFrame*> vpLocalKeyFrames = mpCurrentKeyFrame->GetVectorCovisibleKeyFrames();  // Local Key Frames 선언
+
+    float redundant_th; // 중복되는 비율 선언
+
+    if(!mbInertial) // IMU를 사용하지 않을 때
+        redundant_th = 0.9; // 중복되는 비율 0.9로 선언
+    else if (mbMonocular)   // Monocular모드 일 때
+        redundant_th = 0.9; // 중복되는 비율 0.9로 선언
+    else    // 스테레오 모드 일 때
+        redundant_th = 0.5; // 중복되는 비율 0.5로 선언
+
+    const bool bInitImu = mpAtlas->isImuInitialized();  // Atlas에 IMU 초기화가 되어있는지 bInitImu 변수로 확인
+    int count=0;    // KeyFrame의 갯수를 세는 변수
 
     // Compoute last KF from optimizable window:
-    unsigned int last_ID;
-    if (mbInertial)
+    unsigned int last_ID;   // Last KeyFrame ID를 저장할 변수
+
+    if (mbInertial) // IMU를 사용할 때 - Last ID 사용 & count 증가
     {
         int count = 0;
-        KeyFrame* aux_KF = mpCurrentKeyFrame;
-        while(count<Nd && aux_KF->mPrevKF)
+        KeyFrame* aux_KF = mpCurrentKeyFrame;   // aux는 Auxiliary의 줄임말로 추정 (Auxiliary - 보조의)
+        while(count<Nd && aux_KF->mPrevKF)  // count가 ND(=21)보다 작고 Prev Key Frame이 존재할 때
         {
-            aux_KF = aux_KF->mPrevKF;
-            count++;
+            aux_KF = aux_KF->mPrevKF;   // aux_KF를 Prev Key Frame으로 선언
+            count++;    // count를 1 증가
         }
-        last_ID = aux_KF->mnId;
+        last_ID = aux_KF->mnId; // while문을 빠져 나오면 조건에 포함된 가장 이전의 Key Frame을 Last ID로 선언
     }
 
 
-
+    // Local Key Frames를 for문을 활용하여 순회
     for(vector<KeyFrame*>::iterator vit=vpLocalKeyFrames.begin(), vend=vpLocalKeyFrames.end(); vit!=vend; vit++)
     {
-        count++;
+        count++;    // count를 1 증가
         KeyFrame* pKF = *vit;
 
-        if((pKF->mnId==pKF->GetMap()->GetInitKFid()) || pKF->isBad())
-            continue;
-        const vector<MapPoint*> vpMapPoints = pKF->GetMapPointMatches();
+        if((pKF->mnId==pKF->GetMap()->GetInitKFid()) || pKF->isBad())   // Init Key Frame ID이거나 KeyFrame이 Bad일 경우
+            continue;   // Skip
+        const vector<MapPoint*> vpMapPoints = pKF->GetMapPointMatches();    // KeyFrame에서 관찰된 Map Points들을 벡터로 저장
 
-        int nObs = 3;
-        const int thObs=nObs;
-        int nRedundantObservations=0;
-        int nMPs=0;
+        int nObs = 3;   // Observation 갯수 선언
+        const int thObs=nObs;   // Observation Threshold 갯수 선언
+        int nRedundantObservations=0;   // 중복되는 Observation을 Count하기 위한 변수
+        int nMPs=0; // Map Point의 갯수를 Count하기 위한 변수
+
+        // for문을 활용하여 Key Frame에서 관찰된 Map point 순회
         for(size_t i=0, iend=vpMapPoints.size(); i<iend; i++)
         {
-            MapPoint* pMP = vpMapPoints[i];
+            MapPoint* pMP = vpMapPoints[i]; // 하나의 Map Point를 포인터로 가르킨다.
             if(pMP)
             {
-                if(!pMP->isBad())
+                if(!pMP->isBad())   // Map Point가 Bad가 아니라면
                 {
-                    if(!mbMonocular)
+                    if(!mbMonocular)    // Monocular mode가 아닐 경우
                     {
-                        if(pKF->mvDepth[i]>pKF->mThDepth || pKF->mvDepth[i]<0)
-                            continue;
+                        if(pKF->mvDepth[i]>pKF->mThDepth || pKF->mvDepth[i]<0)  //Depth값이 부정확할 때 (Threshold Depth보다 크거나, 0보다 작을 때)
+                            continue;   // Skip
                     }
 
-                    nMPs++;
-                    if(pMP->Observations()>thObs)
+                    nMPs++; // Map Point 갯수 1 증가
+
+                    if(pMP->Observations()>thObs)   
+                    // Map Point의 Observation이 (하나의 Map point가 서로 다른 Key Frame에서 관찰되는 수) Threshold보다 클 때
                     {
+                        // 현재 Key Frame의 ScaleLevel (이미지에서 scale) 값을 가져온다. 참고 - Scale Space와 이미지 피라미드(image pyramid) [https://www.whydsp.org/247]
+                        // 참고 그림 - https://en.wikipedia.org/wiki/Pyramid_(image_processing)#/media/File:Image_pyramid.svg
+                        // NLeft는 KeyPoint를 담고 있는 벡터의 갯수
+                        // 만역 Key Frmae에서 KeyPoint를 담고 있는 벡터의 갯수가 -1 (없다면) Undistorted Keypoint의 octave를 scaleLevel로 대입
+                        //      i(iterator를 돌고 있는 Map point)가 KeyFrame의 NLeft보다 작을 경우 i번째 MapPoint가 관찰된 octave를 저장
+                        //          그렇지 않을 경우 mvKeysRight(Right image에서 관찰된 Map point)의 octave를 대입
                         const int &scaleLevel = (pKF -> NLeft == -1) ? pKF->mvKeysUn[i].octave
                                                                      : (i < pKF -> NLeft) ? pKF -> mvKeys[i].octave
                                                                                           : pKF -> mvKeysRight[i].octave;
+                        
+                        // Current Frame의 Map point를 관찰하고 있는 여러 Keyframe을 observation 변수를 이용하여 저장
                         const map<KeyFrame*, tuple<int,int>> observations = pMP->GetObservations();
-                        int nObs=0;
+
+                        int nObs=0; // Observation 갯수 선언
+
+                        // 하나의 Map point를 관찰하고 있는 KeyFrame에 대해서 Observation이라는 구조를 활용하여 순회
                         for(map<KeyFrame*, tuple<int,int>>::const_iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
                         {
-                            KeyFrame* pKFi = mit->first;
-                            if(pKFi==pKF)
-                                continue;
+                            KeyFrame* pKFi = mit->first;    // Map point를 관찰하고 있는 Key Frame을 pointer로 선언
+                            if(pKFi==pKF)   // Line 1030에서 선언한 Key Frame과 같은 Key Frame일 경우
+                                continue;   // Skip
+
                             tuple<int,int> indexes = mit->second;
                             int leftIndex = get<0>(indexes), rightIndex = get<1>(indexes);
+
+                            // Index를 활용하여 ScaleLeveli를 계산
+                            // NLeft == -1 일 때, Undistorted Keypoints를 활용
+                            // leftIndex != -1 일 때, Keypoints를 활용
+                            // rightIndex != -1 일 때, Right Keypoints를 활용
                             int scaleLeveli = -1;
                             if(pKFi -> NLeft == -1)
                                 scaleLeveli = pKFi->mvKeysUn[leftIndex].octave;
@@ -1227,64 +1261,81 @@ void LocalMapping::KeyFrameCulling()
                                 }
                             }
 
-                            if(scaleLeveli<=scaleLevel+1)
+                            if(scaleLeveli<=scaleLevel+1)   // ScaleLeveli가 현재 Key Frame의 ScaleLevel + 1보다 이하일 경우
                             {
-                                nObs++;
-                                if(nObs>thObs)
-                                    break;
+                                nObs++; // Observation 갯수 1 증가
+                                if(nObs>thObs)  // Observation 갯수가 3을 초과할 경우
+                                    break;  // Observation에 대한 for문을 빠져나온다.
                             }
                         }
-                        if(nObs>thObs)
+
+
+                        if(nObs>thObs)  // Observation 갯수가 3을 초과할 경우
                         {
-                            nRedundantObservations++;
+                            nRedundantObservations++;   // 중복되는 Observation을 Count 1 증가
                         }
                     }
                 }
             }
-        }
+        }   // Map point 순회에 대한 for문에 대한 괄호
 
+        // 중복되는 Observation의 갯수가 중복되는 비율 * Map Point의 갯수를 넘을 때  
+        // 증복되는 Key Frame을 제거하는 과정
         if(nRedundantObservations>redundant_th*nMPs)
         {
-            if (mbInertial)
+            if (mbInertial) // IMU를 사용할 경우
             {
-                if (mpAtlas->KeyFramesInMap()<=Nd)
-                    continue;
+                if (mpAtlas->KeyFramesInMap()<=Nd)  // Atlas에 있는 Key Frame의 갯수를 가져와서 Nd(LIBA와 같은 KeyFrame의 갯수)와 비교
+                // Atlas에 있는 KeyFrame의 갯수가 Nd보다 더 작거나 같은 경우
+                    continue;   // Skip
 
-                if(pKF->mnId>(mpCurrentKeyFrame->mnId-2))
-                    continue;
+                if(pKF->mnId > (mpCurrentKeyFrame->mnId-2)) // Key Frame의 ID가 Current Key Frame의 ID -2 보다 큰 경우
+                    continue;   // Skip
 
-                if(pKF->mPrevKF && pKF->mNextKF)
+                if(pKF->mPrevKF && pKF->mNextKF)    // Prev Key Frame과 Next Key Frame이 모두 존재한다면
                 {
-                    const float t = pKF->mNextKF->mTimeStamp-pKF->mPrevKF->mTimeStamp;
+                    const float t = pKF->mNextKF->mTimeStamp-pKF->mPrevKF->mTimeStamp;  
+                    // Next KeyFrame의 Timestamp와 Prev KeyFrame의 Timestamp의 차이 계산
 
                     if((bInitImu && (pKF->mnId<last_ID) && t<3.) || (t<0.5))
+                    // IMU 초기화를 완료한 상태이고, KeyFrame의 ID가 last_ID보다 작고, Timestamp가 3 미만일 경우이거나,
+                    // Timestamp가 0.5 미만일 경우 (Prev KeyFrame과 Next KeyFrame이 너무 차이가 없을 경우)
                     {
+                        // KeyFrame 제거
                         pKF->mNextKF->mpImuPreintegrated->MergePrevious(pKF->mpImuPreintegrated);
                         pKF->mNextKF->mPrevKF = pKF->mPrevKF;
                         pKF->mPrevKF->mNextKF = pKF->mNextKF;
                         pKF->mNextKF = NULL;
                         pKF->mPrevKF = NULL;
-                        pKF->SetBadFlag();
+                        pKF->SetBadFlag();  // Key Frame의 Graph와 관련된 값들을 모두 Erase (Weight, Observation, Parent 등등..) 
                     }
                     else if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2() && (cv::norm(pKF->GetImuPosition()-pKF->mPrevKF->GetImuPosition())<0.02) && (t<3))
+                    // KeyFrame이 존재하는 Map에 Inertial BA2가 되어 있지 않고,
+                    // 현재 IMU position과 이전 IMU position에 대한 Norm값이 0.02미만이고,
+                    // Timestamp의 값이 3미만일 경우
                     {
+                        // KeyFrame 제거
                         pKF->mNextKF->mpImuPreintegrated->MergePrevious(pKF->mpImuPreintegrated);
                         pKF->mNextKF->mPrevKF = pKF->mPrevKF;
                         pKF->mPrevKF->mNextKF = pKF->mNextKF;
                         pKF->mNextKF = NULL;
                         pKF->mPrevKF = NULL;
-                        pKF->SetBadFlag();
+                        pKF->SetBadFlag();  // Key Frame의 Graph와 관련된 값들을 모두 Erase (Weight, Observation, Parent 등등..) 
                     }
                 }
             }
-            else
+            else    // IMU를 사용하지 않을 경우
             {
-                pKF->SetBadFlag();
+                pKF->SetBadFlag();  // Key Frame의 Graph와 관련된 값들을 모두 Erase (Weight, Observation, Parent 등등..) 
             }
         }
-        if((count > 20 && mbAbortBA) || count>100)
+
+
+        if((count > 20 && mbAbortBA) || count>100)  // count는 Local KeyFrame에 대한 for문을 돌 때마다 1증가 (Line 1029)
+        // 20번 이상 KeyFrame에 대한 for문을 돌면서 mbAbortBA값이 true인 경우이거나
+        // 100번 이상 KeyFrame에 대한 for문을 돈 경우
         {
-            break;
+            break;  // Local Key Frames를 순회하는 for문을 빠져 나온다.
         }
     }
 }
@@ -1292,6 +1343,9 @@ void LocalMapping::KeyFrameCulling()
 
 cv::Mat LocalMapping::SkewSymmetricMatrix(const cv::Mat &v)
 {
+    // Input Matrix v의 경우 (3x1)
+    // LocalMapping::ComputeF12()에서 사용
+
     return (cv::Mat_<float>(3,3) <<             0, -v.at<float>(2), v.at<float>(1),
             v.at<float>(2),               0,-v.at<float>(0),
             -v.at<float>(1),  v.at<float>(0),              0);
@@ -1299,6 +1353,9 @@ cv::Mat LocalMapping::SkewSymmetricMatrix(const cv::Mat &v)
 
 cv::Matx33f LocalMapping::SkewSymmetricMatrix_(const cv::Matx31f &v)
 {
+    // Input Matrix v의 경우 (3x1)
+    // LocalMapping::ComputeF12_()에서 사용
+
     cv::Matx33f skew{0.f, -v(2), v(1),
                      v(2), 0.f, -v(0),
                      -v(1), v(0), 0.f};
