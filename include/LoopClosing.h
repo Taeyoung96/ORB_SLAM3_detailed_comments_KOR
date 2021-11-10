@@ -55,13 +55,33 @@ public:
 
     LoopClosing(Atlas* pAtlas, KeyFrameDatabase* pDB, ORBVocabulary* pVoc,const bool bFixScale);
 
+    /* !
+    * @brief Tracking class를 Pointer로 설정해주기 위한 함수
+    * @call system::System()
+    * @param None
+    * @return None
+    */
     void SetTracker(Tracking* pTracker);
 
+    /* !
+    * @brief LocalMapping Class를 Pointer로 설정해주기 위한 함수
+    * @call system::System()
+    * @param None
+    * @return None
+    */
     void SetLocalMapper(LocalMapping* pLocalMapper);
 
     // Main function
     void Run();
 
+    /* !
+    * @brief LoopClosing::InsertKeyFrame()에 KeyFrame 전달
+            LoopClosing detection을 위한 Queue에 CurrentKeyFrame을 추가
+            LocalMapping::Run()함수를 확인해본 결과, LocalMapping에서 사용된 모든 Keyframe이 저장됨
+    * @call LocalMapping::Run()
+    * @param None
+    * @return None
+    */
     void InsertKeyFrame(KeyFrame *pKF);
 
     void RequestReset();
@@ -109,10 +129,24 @@ public:
 
 protected:
 
+    /* !
+    * @brief mlpLoopKeyFrameQueue에 저장된 값의 유무를 반환
+            LoopClosing::Run()에서 KeyFrame들에 대한 DB가 존재하면 LoopDetection을 시도하고, 그렇지 않으면 초기화를 해줌
+    * @call  LoopClosing::Run()
+    * @param None
+    * @return !mlpLoopKeyFrameQueue.empty() // DB의 값이 존재하면 True, 존재하지 않으면 False
+    */
     bool CheckNewKeyFrames();
 
 
     //Methods to implement the new place recognition algorithm
+    /* !
+    * @brief LoopClosure KF 및 Merged KF 을 탐색하는 것이 목적
+            mlpLoopKeyFrameQueue의 DB값이 존재할 때 작동
+    * @call  LoopClosing::Run()
+    * @param boolean
+    * @return 
+    */
     bool NewDetectCommonRegions();
     bool DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                         std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs);
