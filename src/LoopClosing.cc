@@ -272,35 +272,62 @@ void LoopClosing::InsertKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexLoopQueue);
     if(pKF->mnId!=0)
-        mlpLoopKeyFrameQueue.push_back(pKF);
+        mlpLoopKeyFrameQueue.push_back(pKF); // LoopClosing detection을 위한 Queue에 CurrentKeyFrame을 추가
 }
 
 bool LoopClosing::CheckNewKeyFrames()
 {
     unique_lock<mutex> lock(mMutexLoopQueue);
-    return(!mlpLoopKeyFrameQueue.empty());
-}
+    return(!mlpLoopKeyFrameQueue.empty()); // DB의 값이 존재하면 True, 존재하지 않으면 False
+} 
 
 bool LoopClosing::NewDetectCommonRegions()
 {
+    // VI. Map Merging And Loop Closing (In ORB-SLAM3 paper)
+    // - A. PLACE RECOGNITION
+    // 1 . DBOW2 candidate keyframes                   : Atals DBoW2 DB를 이용하여 가장 유사한 3개의 KF를 검색
+    // 2 . Local window                                : 검색된 KF과 Currnet_KF으로부터 keyPoint 및 MapPoint에 대한 local-window를 정의(2D-2D matching/3D-3D matching)
+    // 3 . 3D aligining transformation                 : Ransac을 이용하여 KF와 검색된 유사한 KF간의 Transforamtion matrix를 추정
+    // 4 . Guided matching refinement                  : 추정된 Transformation matrix를 이용하여 matching point를 추가로 검색하고,
+    //                                                   더 작은 window를 이용하여 non-linear optimization으로 tansforamtion matrix를 추정 및 미세조정
+    // 5 . Verification in three covisible keyframes   : place recognition 지연 및 누락을 피하기 위해 추가 검증을 수행(연속된 3개의 KF의 T를 확인 및 유효성 검사)
+    // 6 . VI Gravity direction verification           : 추정된 T로부터 pitch / roll / yaw 각도가 임계값 미만인지 검사 (정확히 이함수에서 하는지 미확인)
+
+    // 코드 흐름상 2가지 케이스로 종료가 될 수 있음    
+    // a) 1->2->3 or 4
+    // b) 1->2->3 or 4 (3 or 4에서 실패하면) -> 5
+    
+    // ===========================================================================================================================================================================
+    // 초기 설정부분
     {
-        unique_lock<mutex> lock(mMutexLoopQueue);
-        mpCurrentKF = mlpLoopKeyFrameQueue.front();
-        mlpLoopKeyFrameQueue.pop_front();
+        unique_lock<mutex> lock(mMutexLoopQueue);   // LoopDetection을 위해서 새로운 Keyframe이 mlpLoopKeyFrameQueue에 추가되지 않도록 lock을 걸음
+        mpCurrentKF = mlpLoopKeyFrameQueue.front(); // 가장 최근의 KF를 가져옴
+        mlpLoopKeyFrameQueue.pop_front();           // mlpLoopKeyFrameQueue 가장 최근의 KF를 Queue에서 제거
+        
         // Avoid that a keyframe can be erased while it is being process by this thread
-        mpCurrentKF->SetNotErase();
-        mpCurrentKF->mbCurrentPlaceRecognition = true;
+        // 다른 모듈에서 KF를 제거하지 못하도록 방지
+        // 실질적으로 KeyFrame::mbNotErase=true가 되면서 KeyFrame::SetErase() 함수가 작동하지 않도록 방지
+        // KeyFrame::SetBadFlag()은 정확히 어디서 사용된다고 말하기 어려우나, LoopClosing.cc에서 매우 많이 사용됨(KeyFrame::SetErase())
+        mpCurrentKF->SetNotErase(); 
+        
+        mpCurrentKF->mbCurrentPlaceRecognition = true; // 일단 사용되지 않음 (전체 검색을 했으나 사용되는 위치가 없음)
+                                                       // 의미 자체는 current_KF은 PlaceRecognition을 아직 수행하지 않았지만 일단 성공 되었다고 보고 true로 설정
+                                                       // 후반부 return할때 PlaceRecognition이 실패하면 false로 변경되고 반환됨
 
-        mpLastMap = mpCurrentKF->GetMap();
+        mpLastMap = mpCurrentKF->GetMap(); // Map class로부터 현재 map정보의 pointer를 가져옴
     }
-
+    
+    // mpLastMap->IsInertial(): IMU 사용 유무 및 IMU 초기화 유무
+    // mpLastMap->GetIniertialBA1(): LoopClosing::Run()내의 LoopClosing::MergeLocal2()함수에서 Map에대한 IMU 초기화를 해줌
     if(mpLastMap->IsInertial() && !mpLastMap->GetIniertialBA1())
     {
         mpKeyFrameDB->add(mpCurrentKF);
         mpCurrentKF->SetErase();
         return false;
     }
-
+    
+    // 스테레오 카메라 사용 유무
+    // KeyFrame의 개수가 5개 미만인경우
     if(mpTracker->mSensor == System::STEREO && mpLastMap->GetAllKeyFrames().size() < 5) //12
     {
         mpKeyFrameDB->add(mpCurrentKF);
@@ -308,6 +335,8 @@ bool LoopClosing::NewDetectCommonRegions()
         return false;
     }
 
+    // Keyframe의 개수
+    // KeyFrame의 개수가 12개 미만인경우
     if(mpLastMap->GetAllKeyFrames().size() < 12)
     {
         mpKeyFrameDB->add(mpCurrentKF);
@@ -315,34 +344,63 @@ bool LoopClosing::NewDetectCommonRegions()
         return false;
     }
 
-    //Check the last candidates with geometric validation
-    // Loop candidates
-    bool bLoopDetectedInKF = false;
-    bool bCheckSpatial = false;
+    // ===========================================================================================================================================================================
+    // (In papaer, 5.A.3~4)이 해당 (3D aligning transformation, Guided matching refinement)
 
+    //Check the last candidates with geometric validation, 기하학 검증으로 마지막 후보 확인
+    // merge map <-> Loop closing
+    // map merging => 성공적인 Place recognition일 때, Keyframe Ka와 Active map 요소 Ma, 
+    //                그리고 Km과 Stored map 요소인 Mm 사이 data association
+    //     Two step 1) Merge는 공시성 그래프의 Ka들과 Km에 의해 정의된 welding window에서 수행됨
+    //              2) 이 수정은 포즈 그래프 최적화에 의해 병합된 맵의 나머지 부분으로 전파된다.
+    // Loop closing => map merging과 유사하지만, 두 키프레임 모두 Active map에 속해 있음.
+
+    // Loop candidates
+    bool bLoopDetectedInKF = false; // 추후 Loop detcted frame이 발견되면 true
+    bool bCheckSpatial = false;     // 사용되지 않음
+    
+    // mnMergeNumCoincidences는 현재 KF와 이전 KF들로부터 공통된 영역을 발견한 횟수를 의미
+    // mnMergeNumCoincidences=0일 경우 아래의 DetectCommonRegionsFromBoW()를 통해 mnMergeNumCoincidences의 개수가 정해짐  (In papaer, 5.A.2) Local Window
+    // mnMergeNumCoincidences>0일 경우 아래의 if()문에서 증가하거나 DetectCommonRegionsFromBoW()를 통해 개수가 변동됨      (In papaer, 5.A.2) Local Window
+    // DetectCommonRegionsFromBoW()는 이전 프레임들에서 공통뷰를 찾는데 사용되는 함수, 연속된 3개 이상의 KF가 발견되면 mbLoopDetected=True
     if(mnLoopNumCoincidences > 0)
     {
         bCheckSpatial = true;
-        // Find from the last KF candidates
+        // Find from the last KF candidates 
+        // 1. DBoW2 candidate keyframes, Atlas DB에 active keyframe Ka를 입력해야함.
+        // mpCurrentKF = mlpLoopKeyFrameQueue.front()
+        // 초기 mpLoopLastCurrentKF DetectCommonRegionsFromBoW()에서 받고, 이후에는 mpLoopLastCurrentKF = mpCurrentKF 이전 값을 받는다.
         cv::Mat mTcl = mpCurrentKF->GetPose() * mpLoopLastCurrentKF->GetPoseInverse();
+        
+        // Map 병합 이전에는 SE3로 변환행렬을 구하는게 아닌 Sim3로 구함.
         g2o::Sim3 gScl(Converter::toMatrix3d(mTcl.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTcl.rowRange(0, 3).col(3)),1.0);
         g2o::Sim3 gScw = gScl * mg2oLoopSlw;
-        int numProjMatches = 0;
-        vector<MapPoint*> vpMatchedMPs;
+
+        // 계산된 3차원 닮음 변환 관계를 바탕으로 지도 정렬과 지도 병합을 수행한다. SLAM B 지도의 요소들(프레임, 3차원 점, 3차원 선)에 계산된 3차원 닮음 변환이 적용되어
+        // SLAM A 지도에서 중첩이 발생한 프레임을 기준으로 정렬된다. 이때, SLAM A의 중첩된 프레임에서 발견되는 3차원 점과 3차원 선이 SLAM B의 현재 프레임에 투영된 후 
+        //매칭쌍을 탐색해 겹치는 점과 선을 찾아낸다. 정렬된 SLAM B 지도에서 겹치는 점과 선을 제외하고 그 외의 프레임, 3차원 점, 3차원선을 SLAM A에 추가하여 병합 된 지도
+        // 를 완성한다.
+        int numProjMatches = 0;               // DetectAndReffineSim3FromLastKF()내의 FindMatchesByProjection()함수에서 정해짐
+
+        // 변환행렬에 대한 각 가설을 찾기 위해 3d-3d 일치의 최소 집합을 사용하는 Horn 알고리즘을 사용
+        vector<MapPoint*> vpMatchedMPs;      // vpMatchedMPs = vpBestMatchedMapPoints,  map point와 일치하는 점 숫자
         bool bCommonRegion = DetectAndReffineSim3FromLastKF(mpCurrentKF, mpLoopMatchedKF, gScw, numProjMatches, mvpLoopMPs, vpMatchedMPs);
+
+        // mvpLoopMPs = best Map points, vpMatchedMPs = best Matched Map points
+        // RANSAC을 활용해서 Km Local window의 map point를 Ka의 것과 더 잘 정렬하는 변환 행렬 활용하기 위함
+        // => Inlier 찾기...
         if(bCommonRegion)
         {
+            bLoopDetectedInKF = true;          // Loop Detected 인지 true값으로 변환
 
-            bLoopDetectedInKF = true;
-
-            mnLoopNumCoincidences++;
-            mpLoopLastCurrentKF->SetErase();
-            mpLoopLastCurrentKF = mpCurrentKF;
-            mg2oLoopSlw = gScw;
-            mvpLoopMatchedMPs = vpMatchedMPs;
+            mnLoopNumCoincidences++;           // ++
+            mpLoopLastCurrentKF->SetErase();   // SetBadflag
+            mpLoopLastCurrentKF = mpCurrentKF; // Last Key Frame에 입력
+            mg2oLoopSlw = gScw;                // 변환행렬 재활용
+            mvpLoopMatchedMPs = vpMatchedMPs;  // Update matched map points and replace if duplicated, CorrectLoop()에서 활용됨.
 
 
-            mbLoopDetected = mnLoopNumCoincidences >= 3;
+            mbLoopDetected = mnLoopNumCoincidences >= 3;  // 3개 이상 일 때 Loop Detected (True)
             mnLoopNumNotFound = 0;
 
             if(!mbLoopDetected)
@@ -354,10 +412,9 @@ bool LoopClosing::NewDetectCommonRegions()
         {
             bLoopDetectedInKF = false;
 
-            mnLoopNumNotFound++;
-            if(mnLoopNumNotFound >= 2)
+            mnLoopNumNotFound++;          // 찾지 못한건지 확인
+            if(mnLoopNumNotFound >= 2)    // 찾지 못한 것이면 다시 Clear
             {
-
                 mpLoopLastCurrentKF->SetErase();
                 mpLoopMatchedKF->SetErase();
                 mnLoopNumCoincidences = 0;
@@ -365,12 +422,17 @@ bool LoopClosing::NewDetectCommonRegions()
                 mvpLoopMPs.clear();
                 mnLoopNumNotFound = 0;
             }
-
         }
     }
 
     //Merge candidates
     bool bMergeDetectedInKF = false;
+
+    // (In papaer, 5.A.3~4)이 해당 (3D aligning transformation, Guided matching refinement)
+    // mnMergeNumCoincidences는 현재 KF와 이전 KF들로부터 공통된 영역을 발견한 횟수를 의미
+    // mnMergeNumCoincidences=0일 경우 아래의 DetectCommonRegionsFromBoW()를 통해 mnMergeNumCoincidences의 개수가 정해짐
+    // mnMergeNumCoincidences>0일 경우 아래의 if()문에서 증가하거나 DetectCommonRegionsFromBoW()를 통해 개수가 변동됨
+    // DetectCommonRegionsFromBoW()는 이전 프레임들에서 공통뷰를 찾는데 사용되는 함수, 연속된 3개 이상의 KF가 발견되면 mbLoopDetected=True
     if(mnMergeNumCoincidences > 0)
     {
         // Find from the last KF candidates
@@ -379,18 +441,21 @@ bool LoopClosing::NewDetectCommonRegions()
         g2o::Sim3 gScw = gScl * mg2oMergeSlw;
         int numProjMatches = 0;
         vector<MapPoint*> vpMatchedMPs;
+
+        // DetectAndReffineSim3FromLastKF()는 CurrentKF와 잠재적 LoopKF영역에 대하여 공통뷰가 존재하는 Transformation & ProjectionMatching을 통해 검사
+        // ProjectionMatching point의 개수가 일정개수 이상이면 True를 반환
         bool bCommonRegion = DetectAndReffineSim3FromLastKF(mpCurrentKF, mpMergeMatchedKF, gScw, numProjMatches, mvpMergeMPs, vpMatchedMPs);
         if(bCommonRegion)
         {
-            bMergeDetectedInKF = true;
+            bMergeDetectedInKF = true; // Merge할 KF이 존재한다고 설정
 
-            mnMergeNumCoincidences++;
-            mpMergeLastCurrentKF->SetErase();
+            mnMergeNumCoincidences++;  // CurrentKF와 매칭되는 view의 개수를 증가
+            mpMergeLastCurrentKF->SetErase(); // 
             mpMergeLastCurrentKF = mpCurrentKF;
             mg2oMergeSlw = gScw;
             mvpMergeMatchedMPs = vpMatchedMPs;
 
-            mbMergeDetected = mnMergeNumCoincidences >= 3;
+            mbMergeDetected = mnMergeNumCoincidences >= 3; // CurrentKF와 매칭되는 view의 개수가 3개이상일 경우 True
         }
         else
         {
@@ -400,7 +465,6 @@ bool LoopClosing::NewDetectCommonRegions()
             mnMergeNumNotFound++;
             if(mnMergeNumNotFound >= 2)
             {
-
                 mpMergeLastCurrentKF->SetErase();
                 mpMergeMatchedKF->SetErase();
                 mnMergeNumCoincidences = 0;
@@ -413,23 +477,42 @@ bool LoopClosing::NewDetectCommonRegions()
         }
     }
 
+    // mbMergeDetected: 공통뷰가 이미 발견됬을 경우, 위의 if()문을 
+    // mbLoopDetected : DetectCommonRegionsFromBoW()에서 DBoW로 Current_KF와 이전 KF의 공통뷰가 발견됬을 경우 True
     if(mbMergeDetected || mbLoopDetected)
     {
         mpKeyFrameDB->add(mpCurrentKF);
         return true;
     }
 
-    const vector<KeyFrame*> vpConnectedKeyFrames = mpCurrentKF->GetVectorCovisibleKeyFrames();
-    const DBoW2::BowVector &CurrentBowVec = mpCurrentKF->mBowVec;
+
+    // ===========================================================================================================================================================================
+    // (In papaer, 5.A.1) DBoW2 candiate keyframe에 해당
+    const vector<KeyFrame*> vpConnectedKeyFrames = mpCurrentKF->GetVectorCovisibleKeyFrames(); // Current_KF과 연결된 covisible_KF의 포인터를 가져옴
+    const DBoW2::BowVector &CurrentBowVec = mpCurrentKF->mBowVec;                              // Current_KF의 DBoW2 vector의 포인터를 가져옴
 
     // Extract candidates from the bag of words
+    // LoopDetectedKF과 MergedKF에 대한 후보군을 저장할 변수 선언
+    // vpLoopBowCand: ActiveMap에 대한 KF 후보군
+    // vpMergeBowCand: StoredMap에 대한 KF 후보군
     vector<KeyFrame*> vpMergeBowCand, vpLoopBowCand;
+
+    // 위의 5.A.3과 5.A.4에서 bMergeDetectedInKF와 bLoopDetectedInKF를 감지하지 못한 경우 == True
+    // bMergeDetectedInKF : Merge KF를 감지 못함
+    // bLoopDetectedInKF  : Loop KF를 감지 못함
     if(!bMergeDetectedInKF || !bLoopDetectedInKF)
     {
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartDetectBoW = std::chrono::steady_clock::now();
 #endif
-        // Search in BoW
+        // (In papaer, 5.A.1) DBoW2 candiate keyframe에 해당
+        // Search in BoW        
+        // Current_KF와 공통뷰를 갖는 KF중에서 가장 최적의 KF들중 3개를 선택
+        // Active KF을 사용하여 Atals DBoW2 DB를 query하여 Ka(Keyframe_active)와 함께 볼 수 있는 KF을 제외하고 가장 유사한 3개의 KF를 검색
+        // Place recognition을 위한 후보군을 Km이라고 논문에서 정의됨
+        // @param mpCurrentKF: CurrentKF
+        // @param vpLoopBowCand: ActiveMap에 대한 KF 후보군
+        // @param vpMergeBowCand: StoredMap에 대한 KF 후보군
         mpKeyFrameDB->DetectNBestCandidates(mpCurrentKF, vpLoopBowCand, vpMergeBowCand,3);
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_EndDetectBoW = std::chrono::steady_clock::now();
@@ -438,26 +521,51 @@ bool LoopClosing::NewDetectCommonRegions()
     }
 
 
+    // ===========================================================================================================================================================================
+    // (In papaer, 5.A.2) Local Window에 해당
+    // (In papaer, 5.A.5) Verification in three covisible keyframes에 해당
+    // bLoopDetectedInKF : Loop KF를 감지 못함
+    // !vpLoopBowCand.empty() : LoopKF을 위한 후보군이 검색된 경우
     if(!bLoopDetectedInKF && !vpLoopBowCand.empty())
-    {
+    {   
+        // Place recognition을 위한 후보군 Km에 대해 공통영역이 가장 잘 검출되는 KF와 이에 해당하는 Map-Point에 대한 Local-widnow를 정의
+        // DBoW2를 이용한 Ka의 Keypoint와 Km에 대한 local-window간의 2D-2D matching / 3D-3D matching을 사용하여 공통뷰의 개수를 업데이트        
+        // @brief DetectCommonRegionsFromBoW()는 이전 프레임들에서 공통뷰를 찾는데 사용되는 함수
+        // @Param mnLoopNumCoincidences는 CurrentKF와 공통되는 뷰의 개수를 의미하는데, 함수인자를 포인터로 넘겨주어 공통뷰의 개수를 업데이트
+        // @return 연속된 3개 이상의 KF가 발견되면 mbLoopDetected=True
         mbLoopDetected = DetectCommonRegionsFromBoW(vpLoopBowCand, mpLoopMatchedKF, mpLoopLastCurrentKF, mg2oLoopSlw, mnLoopNumCoincidences, mvpLoopMPs, mvpLoopMatchedMPs);
     }
-    // Merge candidates
-
+    
+    
+    // (In papaer, 5.A.2) Local Window에 해당
+    // (In papaer, 5.A.5) Verification in three covisible keyframes에 해당
+    // bMergeDetectedInKF : Merge KF를 감지 못함
+    // !vpMergeBowCand.empty() : MergeKF을 위한 후보군이 검색된 경우
     if(!bMergeDetectedInKF && !vpMergeBowCand.empty())
     {
+        // 위와 동일        
+        // 후보군 Km에 대해 공통영역이 가장 잘 검출되는 KF와 이에 해당하는 Map-Point에 대한 Local-widnow를 정의
+        // DBoW2를 이용한 Ka의 Keypoint와 Km에 대한 local-window간의 2D-2D matching / 3D-3D matching을 사용하여 공통뷰의 개수를 업데이트        
+        // @brief DetectCommonRegionsFromBoW()는 이전 프레임들에서 공통뷰를 찾는데 사용되는 함수
+        // @Param mnLoopNumCoincidences는 CurrentKF와 공통되는 뷰의 개수를 의미하는데, 함수인자를 포인터로 넘겨주어 공통뷰의 개수를 업데이트
+        // @return 연속된 3개 이상의 KF가 발견되면 mbLoopDetected=True
         mbMergeDetected = DetectCommonRegionsFromBoW(vpMergeBowCand, mpMergeMatchedKF, mpMergeLastCurrentKF, mg2oMergeSlw, mnMergeNumCoincidences, mvpMergeMPs, mvpMergeMatchedMPs);
     }
 
-    mpKeyFrameDB->add(mpCurrentKF);
+    
+    mpKeyFrameDB->add(mpCurrentKF); // CurrentKF에서 Bag-of-word를 추출하고 DB에 저장
 
+    // Merged KF 또는 LoopDetected KF을 발견한 경우 True를 반환
     if(mbMergeDetected || mbLoopDetected)
     {
         return true;
     }
 
+    // Merged KF 또는 LoopDetected KF이 아닌경우, Queue에서 제거하고 False를 반환
     mpCurrentKF->SetErase();
-    mpCurrentKF->mbCurrentPlaceRecognition = false;
+    mpCurrentKF->mbCurrentPlaceRecognition = false; // 일단 사용되지 않음 (전체 검색을 했으나 사용되는 위치가 없음)
+                                                    // 의미 자체는 current_KF은 PlaceRecognition을 아직 수행하지 않았지만 일단 성공 되었다고 보고 true로 설정
+                                                    // 후반부 return할때 PlaceRecognition이 실패하면 false로 변경되고 반환됨
 
     return false;
 }
