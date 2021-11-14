@@ -50,6 +50,9 @@ public:
     typedef pair<set<KeyFrame*>,int> ConsistentGroup;    
     typedef map<KeyFrame*,g2o::Sim3,std::less<KeyFrame*>,
         Eigen::aligned_allocator<std::pair<KeyFrame* const, g2o::Sim3> > > KeyFrameAndPose;
+    // aligned_allocator는 STL library와 Eigen을 같이 쓸 때 사용하는 연산자.
+    //  map<KeyFrame*, g2o::Sim3>를 Line 51~52와 같이 쓴 것을 알 수 있다.
+    // 출처 : https://eigen.tuxfamily.org/dox/group__TopicStlContainers.html
 
 public:
 
@@ -162,6 +165,11 @@ protected:
     void SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector<MapPoint*> &vpMapPoints);
     void SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<MapPoint*> &vpMapPoints);
 
+    /* !
+    * @brief Loop를 Detect 했을 때, 찾을 Loop를 활용하여 Key Frame의 Sim3를 최적화하고, Map point도 최적화
+    * @param None
+    * @return None
+    */
     void CorrectLoop();
 
     void MergeLocal();
