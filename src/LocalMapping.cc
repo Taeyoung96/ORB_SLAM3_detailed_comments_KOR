@@ -26,7 +26,6 @@
 
 #include<mutex>
 #include<chrono>
-test
 
 
 namespace ORB_SLAM3
