@@ -937,6 +937,13 @@ int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatche
     return num_matches;
 }
 
+/* !
+    * @brief 일치하는 map-point를 업데이트하고, 중복되는 것은 교체            
+    * @call  LoopClosing::Run()
+    * @param None
+    * @return None
+*/
+
 void LoopClosing::CorrectLoop()
 {
     cout << "Loop detected!" << endl;
@@ -1092,6 +1099,12 @@ void LoopClosing::CorrectLoop()
             }
         }
     }
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //*************************************************************************************************************************
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //*************************************************************************************************************************
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
     // Project MapPoints observed in the neighborhood of the loop keyframe
     // into the current keyframe and neighbors using corrected poses.

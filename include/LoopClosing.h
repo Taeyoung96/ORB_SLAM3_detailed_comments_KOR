@@ -161,7 +161,7 @@ protected:
 
     void SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector<MapPoint*> &vpMapPoints);
     void SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<MapPoint*> &vpMapPoints);
-
+    
     void CorrectLoop();
 
     void MergeLocal();
