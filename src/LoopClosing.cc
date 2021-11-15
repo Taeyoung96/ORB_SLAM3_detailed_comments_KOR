@@ -950,151 +950,188 @@ void LoopClosing::CorrectLoop()
 
     // Send a stop signal to Local Mapping
     // Avoid new keyframes are inserted while correcting the loop
-    //^
+    // Local Mapping 쪽에 Stop Signal을 보내고
+    // Loop correcting을 진행할 때, 새로운 KeyFrame이 들어오는 것을 막아줍니다.
     mpLocalMapper->RequestStop();
-    mpLocalMapper->EmptyQueue(); // Proccess keyframes in the queue
+    mpLocalMapper->EmptyQueue(); // mlNewKeyFrames에 데이터가 없애기 위해 사용하는 함수
 
 
     // If a Global Bundle Adjustment is running, abort it
+    // Global Bundle Adjustment가 수행될 경우, 이를 중단합니다.
     cout << "Request GBA abort" << endl;
-    if(isRunningGBA())
+    if(isRunningGBA())      // GBA가 실행되고 있는지 확인 : mbRunningGBA이라는 변수의 상태 확인
     {
         unique_lock<mutex> lock(mMutexGBA);
-        mbStopGBA = true;
+        mbStopGBA = true;   // mbStopGBA를 true로 바꾸므로써, 중단했다는 것을 알려줌
 
-        mnFullBAIdx++;
+        mnFullBAIdx++;  // Bundle Adjustment Index 1 증가
 
         if(mpThreadGBA)
         {
             cout << "GBA running... Abort!" << endl;
-            mpThreadGBA->detach();
-            delete mpThreadGBA;
+            mpThreadGBA->detach();  // 쓰레드를 떼어내서 독립적으로 작동하게끔한다.
+            delete mpThreadGBA; // 쓰레드 메모리 해제 - 참고 : C++ 스레드의 분류와 사용법[https://m.blog.naver.com/PostView.naver?isHttpsRedirect=true&blogId=ghoism51&logNo=220190125981]  
         }
     }
 
     // Wait until Local Mapping has effectively stopped
-    //^
-    while(!mpLocalMapper->isStopped())
+    while(!mpLocalMapper->isStopped())  // Stop일 때까지 while문을 계속 돈다.
     {
-        usleep(1000);
+        usleep(1000);   // usleep을 이용하여 Local Mapping이 Stop할 때가지 잠시 대기 1000 micro second
     }
 
     // Ensure current keyframe is updated
     cout << "start updating connections" << endl;
-    mpCurrentKF->UpdateConnections();
+    mpCurrentKF->UpdateConnections();   
+    // 현재 Stop된 상태의 Local Mapping, Global Bundleadjustment가 중단된 상태에서
+    // KeyFrame의 covisibility graph를 update
 
     // Retrive keyframes connected to the current keyframe and compute corrected Sim3 pose by propagation
-    mvpCurrentConnectedKFs = mpCurrentKF->GetVectorCovisibleKeyFrames();
-    mvpCurrentConnectedKFs.push_back(mpCurrentKF);
+    // 현재 키프레임에 연결된 키프레임을 검색하고 전파(propagation)를 통해 수정된 Sim3 포즈를 계산합니다.
+
+    mvpCurrentConnectedKFs = mpCurrentKF->GetVectorCovisibleKeyFrames();    
+    // Current KeyFrame에서 Covisibility graph로 연결된 Key Frame을 Vector 형태로 담아둡니다.
+    mvpCurrentConnectedKFs.push_back(mpCurrentKF);  // Current Key Frame까지 mvpCurrentConnectedKFs 변수에 담아둡니다.
 
     KeyFrameAndPose CorrectedSim3, NonCorrectedSim3;
-    CorrectedSim3[mpCurrentKF]=mg2oLoopScw;
-    cv::Mat Twc = mpCurrentKF->GetPoseInverse();
+    CorrectedSim3[mpCurrentKF]=mg2oLoopScw; // map 자료구조의 초기화 방법 - Current KeyFrame의 Pose를 mg2oLoopScw로 대입
+    cv::Mat Twc = mpCurrentKF->GetPoseInverse();    // Current Key Frame의 Camera to World 값 대입
 
-    Map* pLoopMap = mpCurrentKF->GetMap();
-
+    Map* pLoopMap = mpCurrentKF->GetMap();  // pLoopMap이라는 변수에 Current Key Frame의 Map을 대입
+    // 중괄호로 Mutex를 lock하는 범위를 지정해준다.
+    // 참고 : https://m.blog.naver.com/PostView.naver?isHttpsRedirect=true&blogId=muri1004&logNo=221276270566
     {
         // Get Map Mutex
         unique_lock<mutex> lock(pLoopMap->mMutexMapUpdate);
 
-        const bool bImuInit = pLoopMap->isImuInitialized();
+        const bool bImuInit = pLoopMap->isImuInitialized(); // IMU가 Initialzied 되어 있으면 true, 되어 있지 않으면 false로 선언
 
+        // for문을 활용해서 mvpCurrentConnectedKFs를 순회
         for(vector<KeyFrame*>::iterator vit=mvpCurrentConnectedKFs.begin(), vend=mvpCurrentConnectedKFs.end(); vit!=vend; vit++)
         {
-            KeyFrame* pKFi = *vit;
+            KeyFrame* pKFi = *vit;  // pointer를 활용하여 vector iterator (= KeyFrame)을 가리킨다.
 
-            cv::Mat Tiw = pKFi->GetPose();
+            cv::Mat Tiw = pKFi->GetPose();  // world to i(현재 index의 KeyFrame)의 Pose를 가져온다.
 
-            if(pKFi!=mpCurrentKF)
+            if(pKFi!=mpCurrentKF)   // Current Key Frame이 아니라면
             {
-                cv::Mat Tic = Tiw*Twc;
-                cv::Mat Ric = Tic.rowRange(0,3).colRange(0,3);
-                cv::Mat tic = Tic.rowRange(0,3).col(3);
-                g2o::Sim3 g2oSic(Converter::toMatrix3d(Ric),Converter::toVector3d(tic),1.0);
-                g2o::Sim3 g2oCorrectedSiw = g2oSic*mg2oLoopScw;
+                cv::Mat Tic = Tiw*Twc;  // i 번째 Key Frame의 pose와 Current Key Frame의 pose의 차이를 Transformation matrix로 저장
+                cv::Mat Ric = Tic.rowRange(0,3).colRange(0,3);  // i 번째 Key Frame의 pose와 Current Key Frame의 Rotation matrix
+                cv::Mat tic = Tic.rowRange(0,3).col(3); // i 번째 Key Frame의 pose와 Current Key Frame의 Translation vector
+
+                // g2o 설명 : https://goodgodgd.github.io/ian-flow/archivers/how-to-use-g2o#3-how-to-use-g2o-with-example
+                g2o::Sim3 g2oSic(Converter::toMatrix3d(Ric),Converter::toVector3d(tic),1.0);    
+                // i 번째 Key Frame의 pose와 Current Key Frame의 pose의 Sim3 초기화
+                
+                g2o::Sim3 g2oCorrectedSiw = g2oSic*mg2oLoopScw; 
+                // i 번째 Key Frame의 pose와 Current Key Frame의 pose의 Sim3와 Loop의 world to camera Sim3값으로
+                // world to i 번째 Key Frame pose의 Sim3값을 계산
+
                 //Pose corrected with the Sim3 of the loop closure
-                CorrectedSim3[pKFi]=g2oCorrectedSiw;
+                // Loop closure의 Sim3로 수정된 포즈
+                CorrectedSim3[pKFi]=g2oCorrectedSiw;    // CorrectedSim3 자료구조에 대입
             }
 
-            cv::Mat Riw = Tiw.rowRange(0,3).colRange(0,3);
-            cv::Mat tiw = Tiw.rowRange(0,3).col(3);
+            cv::Mat Riw = Tiw.rowRange(0,3).colRange(0,3);  // i 번째 Key Frame의 pose와 Current Key Frame의 Rotation matrix
+            cv::Mat tiw = Tiw.rowRange(0,3).col(3); //  i 번째 Key Frame의 pose와 Current Key Frame의 Translation vector
             g2o::Sim3 g2oSiw(Converter::toMatrix3d(Riw),Converter::toVector3d(tiw),1.0);
+            // world to i 번째 Key Frame의 pose의 Sim3 초기화
+
             //Pose without correction
+            // Loop closure를 활용하지 않은 pose
             NonCorrectedSim3[pKFi]=g2oSiw;
         }
 
         // Correct all MapPoints obsrved by current keyframe and neighbors, so that they align with the other side of the loop
+        // Loop의 다른 쪽과 정렬되도록 Current Key Frame과 이웃한 Key Frame에서 관찰된 Map point를 수정합니다.
+
+        // for문을 활용해서 CorrectedSim3를 순회
         for(KeyFrameAndPose::iterator mit=CorrectedSim3.begin(), mend=CorrectedSim3.end(); mit!=mend; mit++)
         {
-            KeyFrame* pKFi = mit->first;
-            g2o::Sim3 g2oCorrectedSiw = mit->second;
-            g2o::Sim3 g2oCorrectedSwi = g2oCorrectedSiw.inverse();
+            KeyFrame* pKFi = mit->first;    // i번째 Key Frame을 pointer로 가리킨다.
+            g2o::Sim3 g2oCorrectedSiw = mit->second;    // world to i번째 Key Frame의 Sim3값을 pointer로 가리킨다. (Loop을 활용)
+            g2o::Sim3 g2oCorrectedSwi = g2oCorrectedSiw.inverse();  // i번째 Key Frame to world의 Sim3값을 pointer로 가리킨다. (Loop을 활용)
 
-            g2o::Sim3 g2oSiw =NonCorrectedSim3[pKFi];
+            g2o::Sim3 g2oSiw =NonCorrectedSim3[pKFi];   // world to i번째 Key Frame의 Sim3값을 pointer로 가리킨다. (Loop을 활용 X)
 
-            vector<MapPoint*> vpMPsi = pKFi->GetMapPointMatches();
-            for(size_t iMP=0, endMPi = vpMPsi.size(); iMP<endMPi; iMP++)
+            vector<MapPoint*> vpMPsi = pKFi->GetMapPointMatches();  // i번째 Key Frame에서 Map point를 vector에 담는다.
+            for(size_t iMP=0, endMPi = vpMPsi.size(); iMP<endMPi; iMP++)    // for문을 활용하여 Map point를 순회
             {
-                MapPoint* pMPi = vpMPsi[iMP];
-                if(!pMPi)
-                    continue;
-                if(pMPi->isBad())
-                    continue;
-                if(pMPi->mnCorrectedByKF==mpCurrentKF->mnId)
-                    continue;
+                MapPoint* pMPi = vpMPsi[iMP];   // 하나의 Map point를 pointer로 가리킨다.
+                if(!pMPi)  // Map point가 없으면 
+                    continue;   // Skip
+                if(pMPi->isBad())   // Map point가 좋지 않으면
+                    continue;   // Skip
+                if(pMPi->mnCorrectedByKF==mpCurrentKF->mnId)    // 현재 Current Key Frame에서의 Map point일 경우
+                    continue;   // Skip
 
                 // Project with non-corrected pose and project back with corrected pose
-                cv::Mat P3Dw = pMPi->GetWorldPos();
-                Eigen::Matrix<double,3,1> eigP3Dw = Converter::toVector3d(P3Dw);
-                Eigen::Matrix<double,3,1> eigCorrectedP3Dw = g2oCorrectedSwi.map(g2oSiw.map(eigP3Dw));
+                // 수정되지 않은 포즈로 투영하고 수정된 포즈로 다시 투영합니다.
 
-                cv::Mat cvCorrectedP3Dw = Converter::toCvMat(eigCorrectedP3Dw);
-                pMPi->SetWorldPos(cvCorrectedP3Dw);
-                pMPi->mnCorrectedByKF = mpCurrentKF->mnId;
-                pMPi->mnCorrectedReference = pKFi->mnId;
-                pMPi->UpdateNormalAndDepth();
+                cv::Mat P3Dw = pMPi->GetWorldPos(); // Map point의 3D 좌표 값을 가져온다. 
+                Eigen::Matrix<double,3,1> eigP3Dw = Converter::toVector3d(P3Dw);    // Eigen matrix 형태로 형변환 후 eigP3D에 저장
+
+                // g2o::Sim3 의 map()함수 설명 : http://docs.ros.org/en/melodic/api/orb_slam2_ros/html/structg2o_1_1Sim3.html
+                // map의 input : x,y,z 좌표 >> output : s*(r*xyz) + t;
+                Eigen::Matrix<double,3,1> eigCorrectedP3Dw = g2oCorrectedSwi.map(g2oSiw.map(eigP3Dw));
+                // Loop를 활용하여 계산된 Scale 값을 고려해서 x,y,z 값을 계산
+
+                cv::Mat cvCorrectedP3Dw = Converter::toCvMat(eigCorrectedP3Dw); // Cv Mat 형태로 형변환 후 cvCorrectedP3D에 저장
+                pMPi->SetWorldPos(cvCorrectedP3Dw); // Map point의 3D 좌표 값을 Update
+                pMPi->mnCorrectedByKF = mpCurrentKF->mnId;  // 수정을 하는데 기준이 된 Key Frame을 Current Key Frame으로 대입
+                pMPi->mnCorrectedReference = pKFi->mnId;    // 수정을 하는데 reference가 된 Key Frame을 i번째 Key Frame으로 대입
+                pMPi->UpdateNormalAndDepth();   // Normal vector 및 Depth값 update
             }
 
             // Update keyframe pose with corrected Sim3. First transform Sim3 to SE3 (scale translation)
-            Eigen::Matrix3d eigR = g2oCorrectedSiw.rotation().toRotationMatrix();
-            Eigen::Vector3d eigt = g2oCorrectedSiw.translation();
-            double s = g2oCorrectedSiw.scale();
+            // 수정된 Sim3로 키프레임 포즈를 업데이트합니다. 먼저 Sim3를 SE3로 변환(스케일 변환)
+            Eigen::Matrix3d eigR = g2oCorrectedSiw.rotation().toRotationMatrix();   // Loop를 활용해 계산된 Sim3에서 Rotation matrix 추출
+            Eigen::Vector3d eigt = g2oCorrectedSiw.translation();   // Loop를 활용해 계산된 Sim3에서 Translation vector 추출
+            double s = g2oCorrectedSiw.scale(); // Loop를 활용해 계산된 Sim3에서 scale 값 추출
 
-            eigt *=(1./s); //[R t/s;0 1]
+            eigt *=(1./s); //[R t/s;0 1] scale 값으로 나눈다.
 
-            cv::Mat correctedTiw = Converter::toCvSE3(eigR,eigt);
+            cv::Mat correctedTiw = Converter::toCvSE3(eigR,eigt);   // world to i번째 Camera pose의 4x4 Transformation Matrix 변환
 
-            pKFi->SetPose(correctedTiw);
+            pKFi->SetPose(correctedTiw);    // 계산된 Transformation Matrix로 Pose 지정
 
             // Correct velocity according to orientation correction
-            if(bImuInit)
+            // Orientation 보정에 따른 Velocity 수정
+            if(bImuInit)    // IMU가 Initialzied 되어 있으면
             {
                 Eigen::Matrix3d Rcor = eigR.transpose()*g2oSiw.rotation().toRotationMatrix();
-                pKFi->SetVelocity(Converter::toCvMat(Rcor)*pKFi->GetVelocity());
+                // Loop를 활용해 계산된 Sim3에서 Rotation matrix의 역행렬 *  world to i번째 Key Frame의 Sim3(Loop 활용 X) >> 수정된 Rotation Matrix
+                pKFi->SetVelocity(Converter::toCvMat(Rcor)*pKFi->GetVelocity());    // 수정된 Rotation Matrix로 Velocity를 새로 update
             }
 
             // Make sure connections are updated
-            pKFi->UpdateConnections();
+            pKFi->UpdateConnections(); // KeyFrame의 covisibility graph를 update
         }
         // TODO Check this index increasement
-        pLoopMap->IncreaseChangeIndex();
+        pLoopMap->IncreaseChangeIndex();    // Map의 index를 update
 
 
         // Start Loop Fusion
         // Update matched map points and replace if duplicated
-        for(size_t i=0; i<mvpLoopMatchedMPs.size(); i++)
+
+        // Loop fusion을 시작
+        // 서로 matched된 map points를 업데이트하고 복제되는 경우 교체한다.
+        for(size_t i=0; i<mvpLoopMatchedMPs.size(); i++)    // for문을 통해 mvpLoopMatchedMPs를 순회
         {
-            if(mvpLoopMatchedMPs[i])
+            if(mvpLoopMatchedMPs[i])    // Map point가 존재할 경우
             {
-                MapPoint* pLoopMP = mvpLoopMatchedMPs[i];
-                MapPoint* pCurMP = mpCurrentKF->GetMapPoint(i);
-                if(pCurMP)
-                    pCurMP->Replace(pLoopMP);
-                else
+                MapPoint* pLoopMP = mvpLoopMatchedMPs[i];   // Loop의 Map point
+                MapPoint* pCurMP = mpCurrentKF->GetMapPoint(i); // Current Key Frame의 Map point
+                if(pCurMP)  // Current Key Frame의 Map point가 존재할 경우
+                    pCurMP->Replace(pLoopMP);   // Loop Map point로 교체
+
+                else    // Current Key Frame의 Map point가 없을 경우
                 {
-                    mpCurrentKF->AddMapPoint(pLoopMP,i);
-                    pLoopMP->AddObservation(mpCurrentKF,i);
-                    pLoopMP->ComputeDistinctiveDescriptors();
+                    mpCurrentKF->AddMapPoint(pLoopMP,i);    // Current Key Frame에 Map point 추가
+                    pLoopMP->AddObservation(mpCurrentKF,i); // Key Frame에서 Map point에 대해 Observation 추가
+                    pLoopMP->ComputeDistinctiveDescriptors();   // Descriptor 계산
+                                                                // Map-point는 여러 KF에서 관찰 될 수 있지만,
+                                                                // 이중 가장 대표적인 descirptor를 사용하기 위해서, 갱신 또는 유지하는 작업이 포함됨
                 }
             }
         }
