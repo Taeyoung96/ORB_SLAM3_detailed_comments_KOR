@@ -1105,7 +1105,7 @@ void LoopClosing::CorrectLoop()
 
 
         // Start Loop Fusion
-        // Update matched map points and replace if duplicated
+        // Update matched map points and replace if duplicated  
 
         // Loop fusion을 시작
         // 서로 matched된 map points를 업데이트하고 복제되는 경우 교체한다.
