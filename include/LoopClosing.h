@@ -164,16 +164,12 @@ protected:
 
     void SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector<MapPoint*> &vpMapPoints);
     void SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<MapPoint*> &vpMapPoints);
-<<<<<<< HEAD
-    
-=======
 
     /* !
     * @brief Loop를 Detect 했을 때, 찾을 Loop를 활용하여 Key Frame의 Sim3를 최적화하고, Map point도 최적화
     * @param None
     * @return None
     */
->>>>>>> 127c3136015dfb49602a50684814b03cba384933
     void CorrectLoop();
 
     void MergeLocal();
