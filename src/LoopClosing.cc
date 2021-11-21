@@ -1038,14 +1038,14 @@ void LoopClosing::CorrectLoop()
         // Correct all MapPoints obsrved by current keyframe and neighbors, so that they align with the other side of the loop
         // Loop의 다른 쪽과 정렬되도록 Current Key Frame과 이웃한 Key Frame에서 관찰된 Map point를 수정합니다.
 
-        // for문을 활용해서 CorrectedSim3를 순회
+        // for문을 활용해서 CorrectedSim3를 순회(결국 인접한 프레임을 순회)
         for(KeyFrameAndPose::iterator mit=CorrectedSim3.begin(), mend=CorrectedSim3.end(); mit!=mend; mit++)
         {
             KeyFrame* pKFi = mit->first;    // i번째 Key Frame을 pointer로 가리킨다.
             g2o::Sim3 g2oCorrectedSiw = mit->second;    // world to i번째 Key Frame의 Sim3값을 pointer로 가리킨다. (Loop을 활용)
             g2o::Sim3 g2oCorrectedSwi = g2oCorrectedSiw.inverse();  // i번째 Key Frame to world의 Sim3값을 pointer로 가리킨다. (Loop을 활용)
 
-            g2o::Sim3 g2oSiw =NonCorrectedSim3[pKFi];   // world to i번째 Key Frame의 Sim3값을 pointer로 가리킨다. (Loop을 활용 X)
+            g2o::Sim3 g2oSiw = NonCorrectedSim3[pKFi];   // world to i번째 Key Frame의 Sim3값을 pointer로 가리킨다. (Loop을 활용 X)
 
             vector<MapPoint*> vpMPsi = pKFi->GetMapPointMatches();  // i번째 Key Frame에서 Map point를 vector에 담는다.
             for(size_t iMP=0, endMPi = vpMPsi.size(); iMP<endMPi; iMP++)    // for문을 활용하여 Map point를 순회
@@ -1105,7 +1105,7 @@ void LoopClosing::CorrectLoop()
 
 
         // Start Loop Fusion
-        // Update matched map points and replace if duplicated
+        // Update matched map points and replace if duplicated  
 
         // Loop fusion을 시작
         // 서로 matched된 map points를 업데이트하고 복제되는 경우 교체한다.
@@ -1129,27 +1129,50 @@ void LoopClosing::CorrectLoop()
             }
         }
     }
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //*************************************************************************************************************************
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //*************************************************************************************************************************
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // == 2021-11-18 발표 (LoopClosing::CorrectLoop()) ==
+    // 이전 발표 요약: CurrKF, CovisibilityKF, LoopKF의 world 기준의 좌표계 관리 및 MapPoint 좌표계 관리
+    // 오늘 발표 요약: 이전 발표에서 관리된 데이터를 이용하여 1) LoopClosing 수행 및 2) GBA 수행
 
     // Project MapPoints observed in the neighborhood of the loop keyframe
     // into the current keyframe and neighbors using corrected poses.
     // Fuse duplications.
-    SearchAndFuse(CorrectedSim3, mvpLoopMapPoints);
+    
+    // LoopKF 주변에서 관찰된 MapPoints를 corrected Pose를 사용하여 현재-키프레임과 인접-키프레임에 투영
+    // CorrectedSim3는 [CurrKF, NeighKF]에 해당하는 g2oSiw의 Pose를 포함
+    // mvpLoopMapPoints는 DetectCommonRegionsFromBoW()함수에서 결정됨
+    // 이 함수에서 loopKF의 LoopMapPoint들과 CurrKF과 neighKF과 연결됨.
+    SearchAndFuse(CorrectedSim3, mvpLoopMapPoints); // LoopKF =projection=> CurrKF, neighKF
 
     // After the MapPoint fusion, new links in the covisibility graph will appear attaching both sides of the loop
-    map<KeyFrame*, set<KeyFrame*> > LoopConnections;
+    // MapPoint fusion 이후 루프의 양쪽을 연결하는 covisibility graph의 새 링크를 생성
+    map<KeyFrame*, set<KeyFrame*> > LoopConnections; //<KF_, KF_연결된 KFs>
 
-    for(vector<KeyFrame*>::iterator vit=mvpCurrentConnectedKFs.begin(), vend=mvpCurrentConnectedKFs.end(); vit!=vend; vit++)
+    // CurrKF과 covisibility graph로 연결된 KF를 순회    
+    // 여기까지는 CurrKF과 NeighKF 및 LoopKF들이 연결이 되어있음
+    // 아래 for문을 통해서 CurrKF의 Nighbor과의 관계를 끊어내고, LoopKF과의 관계만 남김
+    for(vector<KeyFrame*>::iterator vit=mvpCurrentConnectedKFs.begin(), vend=mvpCurrentConnectedKFs.end(); vit!=vend; vit++)    
     {
-        KeyFrame* pKFi = *vit;
-        vector<KeyFrame*> vpPreviousNeighbors = pKFi->GetVectorCovisibleKeyFrames();
+        KeyFrame* pKFi = *vit; // KF정보를 포인터로 할당
+        vector<KeyFrame*> vpPreviousNeighbors = pKFi->GetVectorCovisibleKeyFrames(); // 할당된 KF에 대한 covisibility graph에 해당하는 KF들을 가져옴
 
         // Update connections. Detect new links.
+        // pKFi에 해당하는 covisibility graph와 essential graph간의 연결관계 업데이트
         pKFi->UpdateConnections();
-        LoopConnections[pKFi]=pKFi->GetConnectedKeyFrames();
+        LoopConnections[pKFi]=pKFi->GetConnectedKeyFrames(); // 현재 KF과 연결된 KF들을 map<>형태로 그룹화
+
+        // NeighKF과 연결된 covisibility graph KF를 제거
         for(vector<KeyFrame*>::iterator vit_prev=vpPreviousNeighbors.begin(), vend_prev=vpPreviousNeighbors.end(); vit_prev!=vend_prev; vit_prev++)
-        {
+        {                        
             LoopConnections[pKFi].erase(*vit_prev);
         }
+
+        // CurrKF과 연결된 covisibility graph KF를 제거
         for(vector<KeyFrame*>::iterator vit2=mvpCurrentConnectedKFs.begin(), vend2=mvpCurrentConnectedKFs.end(); vit2!=vend2; vit2++)
         {
             LoopConnections[pKFi].erase(*vit2);
@@ -1157,33 +1180,46 @@ void LoopClosing::CorrectLoop()
     }
 
     // Optimize graph
-    bool bFixedScale = mbFixScale;
+    bool bFixedScale = mbFixScale; // 스케일을 고정할지 안할지??
+
+    // IMU_mono이고 초기화가 안된경우
     if(mpTracker->mSensor==System::IMU_MONOCULAR && !mpCurrentKF->GetMap()->GetIniertialBA2())
         bFixedScale=false;
 
-
+    // IMU를 사용 && IMU가 초기화 완료된 경우
     if(pLoopMap->IsInertial() && pLoopMap->isImuInitialized())
     {
+        // (x,y,z,yaw)값을 최적화
         Optimizer::OptimizeEssentialGraph4DoF(pLoopMap, mpLoopMatchedKF, mpCurrentKF, NonCorrectedSim3, CorrectedSim3, LoopConnections);
     }
-    else
+    else // IMU를 사용하지 않는 경우
     {
+        // (x,y,z,roll,pitch,yaw,scale)값을 최적화
+        // "Fast Relocalisation and Loop Closing in Keyframe-Based SLAM"
         Optimizer::OptimizeEssentialGraph(pLoopMap, mpLoopMatchedKF, mpCurrentKF, NonCorrectedSim3, CorrectedSim3, LoopConnections, bFixedScale);
     }
 
+    // 큰 변화에 대한 알림
+    // Map::mnBigChangeIdx++;를 함으로써 큰 변화에 대한 인덱스를 증가시킴(default값은 0)
+    // bool System::MapChanged() 함수에서 추가적인 처리가 수행됨
     mpAtlas->InformNewBigChange();
 
     // Add loop edge
+    // CurrKF와 LoopKF에 대하여 Loop edge를 생성해줌
     mpLoopMatchedKF->AddLoopEdge(mpCurrentKF);
     mpCurrentKF->AddLoopEdge(mpLoopMatchedKF);
 
     // Launch a new thread to perform Global Bundle Adjustment (Only if few keyframes, if not it would take too much time)
+    // GBA를 수행하기 위하여 새로운 쓰레드를 생성 및 수행
+    // "True" == (IMU 초기화 || KF 개수 200개 미만 && AtalsMap 개수 1개)
     if(!pLoopMap->isImuInitialized() || (pLoopMap->KeyFramesInMap()<200 && mpAtlas->CountMaps()==1))
     {
         mbRunningGBA = true;
         mbFinishedGBA = false;
         mbStopGBA = false;
-
+        
+        // GBA 수행
+        // LoopKF과 CurrKF 및 covisibility KF들의 pose와 map-point들을 최적화
         mpThreadGBA = new thread(&LoopClosing::RunGlobalBundleAdjustment, this, pLoopMap, mpCurrentKF->mnId);
     }
 
