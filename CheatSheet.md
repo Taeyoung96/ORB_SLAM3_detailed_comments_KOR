@@ -18,4 +18,8 @@
   또한 `Rwg`의 경우, `w`는 world를 의미하고 `g`는 gyro를 의미합니다.  
   따라서 Gyro 좌표계에서 월드 좌표계로 Rotation Matrix를 의미합니다.  
   
+ - `g2oScw`와 같은 형태로 변수 Naming이 되어있으면, World to camera Sim3값을 의미합니다.  
+   g2o 라이브러리 내의 Sim3를 사용하기 때문에 g2o라는 값이 붙었습니다.  
+   Sim3는 Rotation과 Translation, Scale값이 들어있는 닮음 변환 Matrix를 의미합니다.  
+  
 
