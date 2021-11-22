@@ -1,5 +1,7 @@
 # ORB-SLAM3-detailed-comments-KOR  
 
+This repository is inspired by [ORB_SLAM3_detailed_comments](https://github.com/electech6/ORB_SLAM3_detailed_comments) (Chinese Ver).  
+
 [ORB SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) 코드 스터디를 하고 기록을 하기 위해 만든 repository입니다.  
 
 ORB SLAM3의 4가지 모드 중 **Stereo-inertial mode**에 초점을 맞추어 스터디를 진행 중입니다.  
@@ -35,6 +37,10 @@ Contribute를 진행하기 전 [CONTRIBUTING.md](https://github.com/Taeyoung96/O
 ORB SLAM3 코드를 볼 때, 코드에 대한 이해도를 빠르게 해줄 [ORB SLAM3 CheatSheet](https://github.com/Taeyoung96/ORB_SLAM3_detailed_comments_KOR/blob/master/CheatSheet.md) 입니다.  
 
 ## 참고 하면 좋은 Reference  
+
+- ORBSLAM3_study (KR ver.) [[Github](https://github.com/husuninder/ORBSLAM3_study)]  
+    > 개인 공부용으로 만든 Repository로 추측합니다.  
+    > 한국어로 되어있는 반가운 자료입니다.  
 
 - ORB-SLAM2 Accessible [[Github](https://github.com/kafendt/ORB_SLAM2_Accessible)]  
     > ORB SLAM2의 Monocular mode에 대한 Description이 존재하는 repository.  
