@@ -48,6 +48,11 @@ public:
     void SetTracker(Tracking* pTracker);
 
     // Main function
+    /* !
+     * @brief local mapping 구동시 main function이 되는 함수입니다.
+     * @param None
+     * @return void
+    */
     void Run();
 
     void InsertKeyFrame(KeyFrame* pKF);
@@ -104,8 +109,25 @@ public:
         return mlNewKeyFrames.size();
     }
 
+    /* !
+     * @brief initializing 수행 여부확인
+     * @param None
+     * @return void
+    */
     bool IsInitializing();
+
+    /* !
+     * @brief current keyframe 시간 확인, 없으면 0 대입
+     * @param None
+     * @return void
+    */
     double GetCurrKFTime();
+
+    /* !
+     * @brief current keyframe 반환
+     * @param None
+     * @return Key Frame pointer
+    */
     KeyFrame* GetCurrKF();
 
     std::mutex mMutexImuInit;
@@ -263,6 +285,11 @@ protected:
     */
     void InitializeIMU(float priorG = 1e2, float priorA = 1e6, bool bFirst = false);
     
+    /* !
+    * @brief IMU가 초기화 되었을때, 10초 간격으로 스케일과 중력방향을 최적화합니다.
+    * @param None
+    * @return None
+    */
     void ScaleRefinement();
 
     bool bInitializing;

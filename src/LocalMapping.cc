@@ -66,17 +66,21 @@ void LocalMapping::Run()
 {
     //^ Run
     //^ mbFinished : While 문을 돌고 있는지 아닌지를 체크하는 Flag 
-    mbFinished = false;
+    mbFinished = false; //mbFinished는 초기값 true입니다. run 함수가 종료될때 true로 다시 반환합니다.
 
-    while(1)
+    while(1)    //while문 시작 
     {
         //^ Cannot accept keyframe now because LM is busy
         // Tracking will see that Local Mapping is busy
-        SetAcceptKeyFrames(false);
+        SetAcceptKeyFrames(false);  
+        //해당 함수를 false로 넣고 실행하면 AcceptKeyFrames flag가 fasle로 설정됩니다.
+        //그렇게되면 tracking에서 CreateNewKeyFrame()를 실행하지 않습니다.
 
         //^ Check if key frames list is empty
         // Check if there are keyframes in the queue
-        if(CheckNewKeyFrames() && !mbBadImu)
+        if(CheckNewKeyFrames() && !mbBadImu)    //checknewkeyframes 함수 : newkeyframe 리스트가 empty인지 아닌지 판단해주는 함수입니다. 
+                                                //mbBadimu 함수 imu가 재대로 안들어올때 true를 반환해주게 되어있습니다. 
+                                                //해당 두 함수에 관한 true가 형성될때 if문이 가동됩니다.
         {
 
 #ifdef REGISTER_TIMES
@@ -87,7 +91,7 @@ void LocalMapping::Run()
 #endif
             //^ Keyframe 전처리
             // BoW conversion and insertion in Map
-            ProcessNewKeyFrame();
+            ProcessNewKeyFrame();   //new keyframe 기본작업을 합니다. 여기서 current keyframe이 update됩니다.
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndProcessKF = std::chrono::steady_clock::now();
 
@@ -97,7 +101,7 @@ void LocalMapping::Run()
             //^ mlpRecentAddedMapPoints 정리
             //^ Redundant Map Points
             // Check recent MapPoints
-            MapPointCulling();
+            MapPointCulling();      //각 keyframe별 mappoint를 모으는 작업을 합니다. 
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndMPCulling = std::chrono::steady_clock::now();
 
@@ -106,13 +110,15 @@ void LocalMapping::Run()
 #endif
             //^ MapPoints 생성(in Atlas)
             // Triangulate new MapPoints
-            CreateNewMapPoints();
+            CreateNewMapPoints();   //생성되었던 mappoint들과 새로들어오는 keyframe과 covisibility - keyframe을 가지고 새로운 map point를 생성합니다
 
-            mbAbortBA = false;
+            mbAbortBA = false;  //해당 flag는 local mapping을 중단해야할때 true로 전환되는 flag입니다. 
+                                //따라서 local mapping을 진행하고 있으므로 false로 선언합니다.
 
             if(!CheckNewKeyFrames())
             {
                 // Find more matches in neighbor keyframes and fuse point duplications
+                //해당함수는 위의 설명대로 neighbor keyframes와 매칭하여 duplications point들을 제거합니다.
                 SearchInNeighbors();
             }
 
@@ -123,6 +129,10 @@ void LocalMapping::Run()
             vdMPCreation_ms.push_back(timeMPCreation);
 #endif
 
+            /*
+            아래 변수들을 초기화합니다.
+            진행하면서 변수 각각의 설명을 하겠습니다.
+            */
             bool b_doneLBA = false;
             int num_FixedKF_BA = 0;
             int num_OptKF_BA = 0;
@@ -130,21 +140,33 @@ void LocalMapping::Run()
             int num_edges_BA = 0;
 
             //^ BA
-            if(!CheckNewKeyFrames() && !stopRequested())
+            if(!CheckNewKeyFrames() && !stopRequested())    //stopRequested flag가 정상이고 CheckNewKeyFrames가 정상적으로 clear 되어있으면
+                                                             //if문이 시작됩니다.
             {
                 //^ Local BA
-                if(mpAtlas->KeyFramesInMap()>2)
+                if(mpAtlas->KeyFramesInMap()>2)     //Current map 상에서 사용되고있는 keyframe의 갯수가 3개 이상일때 시작합니다. 
                 {
 
-                    if(mbInertial && mpCurrentKeyFrame->GetMap()->isImuInitialized())
+                    if(mbInertial && mpCurrentKeyFrame->GetMap()->isImuInitialized()) //imu센서가 포함이 되어있고 imu initialize가 완료되었을때 if문이 실행됩니다.
+                                                                                      //isImuInitialized는 local mapping에 imu initialize 함수가 동작한뒤에 실행됩니다.(true)
+                                                                                      //mbInertial 변수는 imu가 들어간 모델이면 true가 되게 됩니다. (mono-imu, stereo-imu)
                     {
+                        //a,b,c의 시간순서대로의 keyframe이 있을때 (a가 current입니다.)
+                        //world좌표계에서의 camera center값을 a keyframe과 b keyframe에서 가져와서 distance를 계산합니다. 
+                        //그리고 b keyframe과 c keyframe의 distance도 계산하여 더합니다.
                         float dist = cv::norm(mpCurrentKeyFrame->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->GetCameraCenter()) +
-                                cv::norm(mpCurrentKeyFrame->mPrevKF->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->mPrevKF->GetCameraCenter());
-
+                                cv::norm(mpCurrentKeyFrame->mPrevKF->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->mPrevKF->GetCameraCenter()); 
+                        
+                        //만약 위에서 계산한 dist값이 0.05(5cm)가 넘어가면 mTinit값에 현재 keyframe과 prev keyframe의 timestamp차이값을 추가합니다. 
                         if(dist>0.05)
                             mTinit += mpCurrentKeyFrame->mTimeStamp - mpCurrentKeyFrame->mPrevKF->mTimeStamp;
+
+                        //mapping 시작전에는 당연히 map이 clear가 되어야하고 map clear부분에서 해당 GetIniertialBA2는 false가 됩니다.
+                        //따라서 map이 정상적으로 초기화되어있는 경우에는 해당 if문에 들어가게됩니다. 
                         if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
-                        {
+                        {   
+                            //mTinit 값이 10이하이고 dist값이 0.02보다 적으면 에러메세지를 발생시키고 
+                            //badimu flag를 true로 바꾸고 현재 map과 active map을 초기화시킵니다.
                             if((mTinit<10.f) && (dist<0.02))
                             {
                                 cout << "Not enough motion for initializing. Reseting..." << endl;
@@ -154,18 +176,22 @@ void LocalMapping::Run()
                                 mbBadImu = true;
                             }
                         }
-
+                        
+                        //bLarge변수를 선언합니다. monocular에서 Inlier된 map point가 75개 이상인 경우 or monocular가 아니고 inlier된 map point가 100개 이상인 경우 true값을 반환합니다. 
                         bool bLarge = ((mpTracker->GetMatchesInliers()>75)&&mbMonocular)||((mpTracker->GetMatchesInliers()>100)&&!mbMonocular);
+
+                        //optimizer 함수를 좀 자세히 들여다 보아야 정확한 실행루트를 이해할 수 있습니다. 
+                        //간단하게 설명하자면 LocalInertialBA는 imu센서의 acc, vel, pose, gyro 데이터와 visual의 keypoint, mappoint들을 조합하여 BA를 진행합니다.
                         Optimizer::LocalInertialBA(mpCurrentKeyFrame, &mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA, bLarge, !mpCurrentKeyFrame->GetMap()->GetIniertialBA2());
                         b_doneLBA = true;
                     }
                     else
-                    {
+                    {   //LocalBundleAdjustment는 위의 LocalInertialBA와 다르게 visual data만 이용하여 BA를 진행합니다.
                         Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA);
                         b_doneLBA = true;
                     }
 
-                }
+                }//따라서 여기까지 BA 최적화까지 진행함을 알수 있습니다.
 #ifdef REGISTER_TIMES
                 std::chrono::steady_clock::time_point time_EndLBA = std::chrono::steady_clock::now();
 
@@ -188,16 +214,18 @@ void LocalMapping::Run()
 #endif
                 //^ IMU Initialization
                 // Initialize IMU here
+                // imu가 들어가있는 경우인데도 Imu initialized가 되지않았을때 해당 if문이 진행됩니다.
                 if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
                 {
-                    if (mbMonocular)
+                    if (mbMonocular)    //mono-imu 일때
                         InitializeIMU(1e2, 1e10, true);
-                    else
+                    else                // s나머지
                         InitializeIMU(1e2, 1e5, true);
                 }
 
 
                 // Check redundant local Keyframes
+                // 불필요한 keyFrame제거를 위해 KeyFrameCulling 함수를 진행합니다.
                 KeyFrameCulling();
 
 #ifdef REGISTER_TIMES
@@ -206,26 +234,38 @@ void LocalMapping::Run()
                 timeKFCulling_ms = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndKFCulling - time_EndLBA).count();
                 vdKFCullingSync_ms.push_back(timeKFCulling_ms);
 #endif
-
+                // mTinit이 100보다 작고 imu 데이터를 가지고있을때 if문이 실행됩니다.
                 if ((mTinit<100.0f) && mbInertial)
                 {
+                    //imu initialized 여부와 tracking 여부를 체크합니다. 성공되었으면 실행합니다.
                     if(mpCurrentKeyFrame->GetMap()->isImuInitialized() && mpTracker->mState==Tracking::OK)
                     {
+                        //GetIniertialBA1이 재대로 진행되었는지 여부를 확인합니다.
+                        //
                         if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA1()){
+                            //재대로 BA1이 진행되지 않았을때 실행합니다.
+                            //mTinit이 5초 이상일때
                             if (mTinit>5.0f)
                             {
                                 cout << "start VIBA 1" << endl;
+                                //BA1을 실행합니다.
                                 mpCurrentKeyFrame->GetMap()->SetIniertialBA1();
-                                if (mbMonocular)
+                                if (mbMonocular) //만약 mono일때면 
                                     InitializeIMU(1.f, 1e5, true);
-                                else
+                                else //mono가 아니라면 
                                     InitializeIMU(1.f, 1e5, true);
+                                //여기서 parameter가 동일한게 들어갑니다. 이유는 잘 모르겠습니다. 어짜피 InitializeIMU안에서 
+                                //mono가 따로 돌게됩니다. 
 
                                 cout << "end VIBA 1" << endl;
+                                //종료
                             }
                         }
+                        //BA2가 재대로 진행되어있는지 봅니다. 재대로 실행되지 않았으면 실행됩니다.
                         else if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2()){
+                            //15초 이후일때 실행됩니다.
                             if (mTinit>15.0f){
+                                //BA2 최적화를 진행합니다. 
                                 cout << "start VIBA 2" << endl;
                                 mpCurrentKeyFrame->GetMap()->SetIniertialBA2();
                                 if (mbMonocular)
@@ -246,6 +286,7 @@ void LocalMapping::Run()
                                 (mTinit>65.0f && mTinit<65.5f)||
                                 (mTinit>75.0f && mTinit<75.5f))){
                             cout << "start scale ref" << endl;
+                            //mono일때 scalerefinement를 실행합니다.
                             if (mbMonocular)
                                 ScaleRefinement();
                             cout << "end scale ref" << endl;
@@ -259,7 +300,7 @@ void LocalMapping::Run()
             vdKFCulling_ms.push_back(timeKFCulling_ms);
 #endif
 
-
+            //loopcloser에서 새로들어온 currentKeyFrame을 insert 시켜줍니다. (map update)
             mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
 
 
@@ -272,6 +313,7 @@ void LocalMapping::Run()
         }
         //^ mlNewKeyFrames가 없을 때
         //^ Stop request가 왔는지 체크
+        //local mapping stop sign이 들어왔을때 실행합니다. 
         else if(Stop() && !mbBadImu)
         {
             // Safe area to stop
@@ -1705,64 +1747,71 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 
 void LocalMapping::ScaleRefinement()
 {
-    // Minimum number of keyframes to compute a solution
+     // Minimum number of keyframes to compute a solution
     // Minimum time (seconds) between first and last keyframe to compute a solution. Make the difference between monocular and stereo
     // unique_lock<mutex> lock0(mMutexImuInit);
-    if (mbResetRequested)
+    if (mbResetRequested) //reset requested가 true일때 return합니다.
         return;
 
     // Retrieve all keyframes in temporal order
-    list<KeyFrame*> lpKF;
-    KeyFrame* pKF = mpCurrentKeyFrame;
-    while(pKF->mPrevKF)
+    list<KeyFrame*> lpKF; //keyframe list를 생성합니다.
+    KeyFrame* pKF = mpCurrentKeyFrame; //keyframe을 currentkeyframe에서 가져옵니다.
+    while(pKF->mPrevKF) //while문 시작!
     {
-        lpKF.push_front(pKF);
-        pKF = pKF->mPrevKF;
+        lpKF.push_front(pKF); //lpKF 리스트에 해당 pKF를 입력합니다.
+        pKF = pKF->mPrevKF; //현재 keyframe기준으로 계속해서 이전 keyframe을 가져옵니다.
     }
-    lpKF.push_front(pKF);
-    vector<KeyFrame*> vpKF(lpKF.begin(),lpKF.end());
 
-    while(CheckNewKeyFrames())
+    //while문이 끝나면서 리스트에는 current keyframe기준 받아왔던 previous key frame들을 모두 저장하게됩니다.
+    
+    lpKF.push_front(pKF);  //마지막 previous keyframe을 넣습니다.
+    //lpKF 리스트 업데이트 완료
+
+    vector<KeyFrame*> vpKF(lpKF.begin(),lpKF.end()); //vpKF 벡터를 초기화하여 만듭니다. begin end는 string값을 반환하며 vector 생성에서 크기 및 초기값을 정해줍니다.
+
+    while(CheckNewKeyFrames()) //while문이 돌아갑니다. 해당 while문은 새로운 keyframe이 들어왔을때 진행됩니다.
     {
-        ProcessNewKeyFrame();
-        vpKF.push_back(mpCurrentKeyFrame);
+        ProcessNewKeyFrame(); //new keyframe 기본작업을 합니다. 여기서 current keyframe이 update됩니다.
+        vpKF.push_back(mpCurrentKeyFrame); //update된 current keyframe을 각각 리스트, 벡터에 대입합니다.
         lpKF.push_back(mpCurrentKeyFrame);
     }
 
-    const int N = vpKF.size();
+    const int N = vpKF.size(); //vector사이즈 정의 --> 위에서 update된 keyframe갯수에 따라 달라집니다. 
 
-    mRwg = Eigen::Matrix3d::Identity();
-    mScale=1.0;
+    mRwg = Eigen::Matrix3d::Identity(); //3x3 단위행렬을 생성합니다.
+    mScale=1.0; //mScale을 1.0으로 초기화합니다. 
 
-    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    Optimizer::InertialOptimization(mpAtlas->GetCurrentMap(), mRwg, mScale);
-    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now(); //최적화 시작지점 기록
+    Optimizer::InertialOptimization(mpAtlas->GetCurrentMap(), mRwg, mScale); //초기값으로부터 optimizer 시작 (해당부분은 scale값과 중력방향만 최적합니다.)
+    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now(); //optimizer 종료지점 기록
 
-    if (mScale<1e-1)
+    if (mScale<1e-1) //optimizer 과정에서 update된 scale값이 1e-1보다 작으면 실행됩니다. 
     {
-        cout << "scale too small" << endl;
+        cout << "scale too small" << endl; //scale이 너무 작아서 initializing 실패
         bInitializing=false;
         return;
     }
+    //해당 1e-1보다 크게되면 initializing이 재대로 되었다고 판단하고 사용한다.
 
     // Before this line we are not changing the map
     unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
     std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-    if ((fabs(mScale-1.f)>0.00001)||!mbMonocular)
+    if ((fabs(mScale-1.f)>0.00001)||!mbMonocular) //해당 조건을 만족하면 업데이트를 시작합니다.
     {
-        mpAtlas->GetCurrentMap()->ApplyScaledRotation(Converter::toCvMat(mRwg).t(),mScale,true);
-        mpTracker->UpdateFrameIMU(mScale,mpCurrentKeyFrame->GetImuBias(),mpCurrentKeyFrame);
+        mpAtlas->GetCurrentMap()->ApplyScaledRotation(Converter::toCvMat(mRwg).t(),mScale,true); //최적화된 mscale값과 rwg값을 넣습니다. 
+        mpTracker->UpdateFrameIMU(mScale,mpCurrentKeyFrame->GetImuBias(),mpCurrentKeyFrame); //최적화된 pose, imu데이터, 맵포인트를 업데이트합니다.
     }
-    std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now(); //업데이트 종료시점 기록
 
-    for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++)
+    for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++) //해당과정에서 setbadflag가 존재하는 keyframe은 제거합니다.
     {
         (*lit)->SetBadFlag();
         delete *lit;
     }
-    mlNewKeyFrames.clear();
 
-    double t_inertial_only = std::chrono::duration_cast<std::chrono::duration<double> >(t1 - t0).count();
+    mlNewKeyFrames.clear(); //new keyframe 초기화
+
+    double t_inertial_only = std::chrono::duration_cast<std::chrono::duration<double>>(t1 - t0).count(); //inertial only 최적화 과정에 소요된 시간 계산
 
     // To perform pose-inertial opt w.r.t. last keyframe
     mpCurrentKeyFrame->GetMap()->IncreaseChangeIndex();
