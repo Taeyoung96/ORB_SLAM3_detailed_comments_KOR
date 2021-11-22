@@ -3954,53 +3954,53 @@ bool Tracking::Relocalization()
 
 void Tracking::Reset(bool bLocMap)
 {
-    Verbose::PrintMess("System Reseting", Verbose::VERBOSITY_NORMAL);
+    Verbose::PrintMess("System Reseting", Verbose::VERBOSITY_NORMAL);  // System Reset 시작, System.cc에서
 
-    if(mpViewer)
+    if(mpViewer) // mpViewer가 True일 때
     {
-        mpViewer->RequestStop();
-        while(!mpViewer->isStopped())
+        mpViewer->RequestStop(); // if mbstopped => mbstoprequested = true
+        while(!mpViewer->isStopped()) // mbstopped 리턴
             usleep(3000);
     }
 
     // Reset Local Mapping
-    if (!bLocMap)
+    if (!bLocMap) //bLocMap이 False 일 때
     {
-        Verbose::PrintMess("Reseting Local Mapper...", Verbose::VERBOSITY_NORMAL);
-        mpLocalMapper->RequestReset();
-        Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL);
+        Verbose::PrintMess("Reseting Local Mapper...", Verbose::VERBOSITY_NORMAL); //Local mapping 시작
+        mpLocalMapper->RequestReset(); // Go to Definition
+        Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL); // Reset Done
     }
 
 
     // Reset Loop Closing
     Verbose::PrintMess("Reseting Loop Closing...", Verbose::VERBOSITY_NORMAL);
-    mpLoopClosing->RequestReset();
+    mpLoopClosing->RequestReset(); // Loop Closing도 Reset
     Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL);
 
     // Clear BoW Database
     Verbose::PrintMess("Reseting Database...", Verbose::VERBOSITY_NORMAL);
-    mpKeyFrameDB->clear();
+    mpKeyFrameDB->clear(); // Key Frame 있는 Dataset Reset
     Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL);
 
     // Clear Map (this erase MapPoints and KeyFrames)
-    mpAtlas->clearAtlas();
+    mpAtlas->clearAtlas(); // Atlas Map도 Reset
     mpAtlas->CreateNewMap();
-    if (mSensor==System::IMU_STEREO || mSensor == System::IMU_MONOCULAR)
-        mpAtlas->SetInertialSensor();
-    mnInitialFrameId = 0;
+    if (mSensor==System::IMU_STEREO || mSensor == System::IMU_MONOCULAR) // Stero+IMU나 Mono+IMU일 때
+        mpAtlas->SetInertialSensor(); // Inertial Sensor도 세팅
+    mnInitialFrameId = 0; //초기 Frame ID도 0으로
 
-    KeyFrame::nNextId = 0;
-    Frame::nNextId = 0;
-    mState = NO_IMAGES_YET;
+    KeyFrame::nNextId = 0; //mnId= nNextId ++, KeyFrameID 초기화
+    Frame::nNextId = 0; //FrameID 초기화
+    mState = NO_IMAGES_YET; // 이미지 초기화
 
-    if(mpInitializer)
+    if(mpInitializer) // Initializer 있는지.
     {
-        delete mpInitializer;
-        mpInitializer = static_cast<Initializer*>(NULL);
+        delete mpInitializer; // initializer삭제
+        mpInitializer = static_cast<Initializer*>(NULL);    //초기화 변수도 null값
     }
     mbSetInit=false;
 
-    mlRelativeFramePoses.clear();
+    mlRelativeFramePoses.clear(); //전부 초기화
     mlpReferences.clear();
     mlFrameTimes.clear();
     mlbLost.clear();
@@ -4019,6 +4019,9 @@ void Tracking::Reset(bool bLocMap)
 
 void Tracking::ResetActiveMap(bool bLocMap)
 {
+    // Tracking::Reset(bool bLocMap) 코드와 거의 동일
+    // 다만 현재 Map에 대해서만 Reset을 진행  
+
     Verbose::PrintMess("Active map Reseting", Verbose::VERBOSITY_NORMAL);
     if(mpViewer)
     {
@@ -4112,6 +4115,8 @@ vector<MapPoint*> Tracking::GetLocalMapMPS()
 
 void Tracking::ChangeCalibration(const string &strSettingPath)
 {
+    // Intrinsic parameter에 대한 내용을 활용하여 변수에 update
+
     cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
     float fx = fSettings["Camera.fx"];
     float fy = fSettings["Camera.fy"];
@@ -4150,10 +4155,19 @@ void Tracking::InformOnlyTracking(const bool &flag)
 
 void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurrentKeyFrame)
 {
-    Map * pMap = pCurrentKeyFrame->GetMap();
-    unsigned int index = mnFirstFrameId;
+    Map * pMap = pCurrentKeyFrame->GetMap();                                  // Map 구하기.
+    unsigned int index = mnFirstFrameId;                                      // 첫번째 프레임 ID = index, mnFirstFrameId=mCurrentFrame.mnId
     list<ORB_SLAM3::KeyFrame*>::iterator lRit = mlpReferences.begin();
+    // 프레임 포즈는 기준 키프레임에 상대적으로 저장됩니다(BA 및 포즈 그래프에 의해 최적화됨).
+    // 먼저 키프레임 자세를 취한 다음 상대적 변환을 연결해야 합니다.
+    // 프레임이 위치추정이 되지 않음(추적 실패)은 저장되지 않습니다.
+
+    // 각 프레임에 대해 참조 키프레임(lRit), 타임스탬프(lT) 및 플래그가 있습니다.
+     // 추적 실패 시 true입니다(lbL).
     list<bool>::iterator lbL = mlbLost.begin();
+
+    
+    // mlRelativeFramePoses: 기본적으로 각 프레임과 프레임의 상대 변환에 대한 참조 키프레임을 저장합니다.
     for(list<cv::Mat>::iterator lit=mlRelativeFramePoses.begin(),lend=mlRelativeFramePoses.end();lit!=lend;lit++, lRit++, lbL++)
     {
         if(*lbL)
@@ -4176,73 +4190,73 @@ void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurr
 
     mpLastKeyFrame = pCurrentKeyFrame;
 
-    mLastFrame.SetNewBias(mLastBias);
-    mCurrentFrame.SetNewBias(mLastBias);
+    mLastFrame.SetNewBias(mLastBias); // LastFrame
+    mCurrentFrame.SetNewBias(mLastBias); // CurrentFrame
 
-    cv::Mat Gz = (cv::Mat_<float>(3,1) << 0, 0, -IMU::GRAVITY_VALUE);
+    cv::Mat Gz = (cv::Mat_<float>(3,1) << 0, 0, -IMU::GRAVITY_VALUE); // z에 중력값 입력
 
     cv::Mat twb1;
     cv::Mat Rwb1;
     cv::Mat Vwb1;
     float t12;
 
-    while(!mCurrentFrame.imuIsPreintegrated())
+    while(!mCurrentFrame.imuIsPreintegrated()) //imu preintegrated 됬는지 확인
     {
         usleep(500);
     }
 
 
-    if(mLastFrame.mnId == mLastFrame.mpLastKeyFrame->mnFrameId)
+    if(mLastFrame.mnId == mLastFrame.mpLastKeyFrame->mnFrameId)  // 마지막 키프레임과 mnFrameId 같을 때
     {
-        mLastFrame.SetImuPoseVelocity(mLastFrame.mpLastKeyFrame->GetImuRotation(),
+        mLastFrame.SetImuPoseVelocity(mLastFrame.mpLastKeyFrame->GetImuRotation(), //IMU 속도값 입력
                                       mLastFrame.mpLastKeyFrame->GetImuPosition(),
                                       mLastFrame.mpLastKeyFrame->GetVelocity());
     }
     else
     {
-        twb1 = mLastFrame.mpLastKeyFrame->GetImuPosition();
+        twb1 = mLastFrame.mpLastKeyFrame->GetImuPosition(); //다를 때는 변수로 입력, 이동벡터 회전행렬 속도값
         Rwb1 = mLastFrame.mpLastKeyFrame->GetImuRotation();
         Vwb1 = mLastFrame.mpLastKeyFrame->GetVelocity();
         t12 = mLastFrame.mpImuPreintegrated->dT;
 
-        mLastFrame.SetImuPoseVelocity(Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaRotation(),
-                                      twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaPosition(),
-                                      Vwb1 + Gz*t12 + Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaVelocity());
+        mLastFrame.SetImuPoseVelocity(Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaRotation(), // delta rotation => 논문 수식 (2)
+                                      twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaPosition(), // delta position
+                                      Vwb1 + Gz*t12 + Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaVelocity()); // delta Velocity
     }
 
     if (mCurrentFrame.mpImuPreintegrated)
     {
-        twb1 = mCurrentFrame.mpLastKeyFrame->GetImuPosition();
+        twb1 = mCurrentFrame.mpLastKeyFrame->GetImuPosition(); // preintegrate 됬을 때
         Rwb1 = mCurrentFrame.mpLastKeyFrame->GetImuRotation();
         Vwb1 = mCurrentFrame.mpLastKeyFrame->GetVelocity();
         t12 = mCurrentFrame.mpImuPreintegrated->dT;
 
-        mCurrentFrame.SetImuPoseVelocity(Rwb1*mCurrentFrame.mpImuPreintegrated->GetUpdatedDeltaRotation(),
+        mCurrentFrame.SetImuPoseVelocity(Rwb1*mCurrentFrame.mpImuPreintegrated->GetUpdatedDeltaRotation(), // 논문 수식 (2)
                                       twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mCurrentFrame.mpImuPreintegrated->GetUpdatedDeltaPosition(),
                                       Vwb1 + Gz*t12 + Rwb1*mCurrentFrame.mpImuPreintegrated->GetUpdatedDeltaVelocity());
     }
 
-    mnFirstImuFrameId = mCurrentFrame.mnId;
+    mnFirstImuFrameId = mCurrentFrame.mnId; // First IMU Frame ID 입력
 }
 
 
 cv::Mat Tracking::ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2)
 {
-    cv::Mat R1w = pKF1->GetRotation();
-    cv::Mat t1w = pKF1->GetTranslation();
-    cv::Mat R2w = pKF2->GetRotation();
-    cv::Mat t2w = pKF2->GetTranslation();
+    cv::Mat R1w = pKF1->GetRotation();             // R1
+    cv::Mat t1w = pKF1->GetTranslation();          // T1
+    cv::Mat R2w = pKF2->GetRotation();             // R2
+    cv::Mat t2w = pKF2->GetTranslation();          // T2
 
-    cv::Mat R12 = R1w*R2w.t();
-    cv::Mat t12 = -R1w*R2w.t()*t2w+t1w;
+    cv::Mat R12 = R1w*R2w.t();                     // R12 = R1*R2T
+    cv::Mat t12 = -R1w*R2w.t()*t2w+t1w;            // T12 = -R1*R2T*T2 + T1
 
-    cv::Mat t12x = Converter::tocvSkewMatrix(t12);
+    cv::Mat t12x = Converter::tocvSkewMatrix(t12);  // T12의 반대칭 행렬
 
-    const cv::Mat &K1 = pKF1->mK;
-    const cv::Mat &K2 = pKF2->mK;
+    const cv::Mat &K1 = pKF1->mK;                   // K1 = KF1->mK
+    const cv::Mat &K2 = pKF2->mK;                   // K2 = KF2->mK
 
 
-    return K1.t().inv()*t12x*R12*K2.inv();
+    return K1.t().inv()*t12x*R12*K2.inv();          // K1T^(-1) * T12^*R12*K2^(-1)
 }
 
 

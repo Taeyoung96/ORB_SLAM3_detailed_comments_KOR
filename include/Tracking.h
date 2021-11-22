@@ -133,11 +133,28 @@ public:
 
     // Load new settings
     // The focal lenght should be similar or scale prediction will fail when projecting points
+    /* !
+    * @brief Intrinsic calibaration 값을 대입, 초점 거리는 비슷해야 한다. 그렇지 않으면 scale 예측에 실패함.
+    * @param camera_intrinsic_calibration_값에_대한_Setting_file_경로
+    * @return None
+    */
     void ChangeCalibration(const string &strSettingPath);
 
     // Use this function if you have deactivated local mapping and you only want to localize the camera.
+    /* !
+    * @brief Local Mapping을 비활성화하고 카메라를 이용한 locaization만 원할 때 사용
+    * @param flag_for_only_Tracking
+    * @return None
+    */
     void InformOnlyTracking(const bool &flag);
 
+    /* !
+    * @brief IMU와 관련된 값들을 Key Frame에 update (Local mapping, Loop closing에서 쓰임) 
+    * @param scale
+    * @param imu_bias
+    * @param current_key_frame
+    * @return None
+    */
     void UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurrentKeyFrame);
     KeyFrame* GetLastKeyFrame()
     {
@@ -202,7 +219,18 @@ public:
     // True if local mapping is deactivated and we are performing only localization
     bool mbOnlyTracking;
 
+    /* !
+    * @brief 전부 초기화 시켜주는 함수
+    * @param Local Mapping이 초기화가 되어있으면 true, 초기화가 필요하면 false
+    * @return None
+    */
     void Reset(bool bLocMap = false);
+
+    /* !
+    * @brief Active map을 초기화 시켜주는 함수
+    * @param Local Mapping이 초기화가 되어있으면 true, 초기화가 필요하면 false
+    * @return None
+    */
     void ResetActiveMap(bool bLocMap = false);
 
     float mMeanTrack;
@@ -212,6 +240,11 @@ public:
     double t0IMU; // time-stamp of IMU initialization
 
 
+    /* !
+    * @brief Local Map Points를 가져오는 함수
+    * @param None
+    * @return Map Points들이 담겨있는 Vector (pointer로 가르킴)
+    */
     vector<MapPoint*> GetLocalMapMPS();
 
     bool mbWriteStats;
@@ -253,8 +286,14 @@ protected:
 
     // Map initialization for monocular
     void MonocularInitialization();
-    void CreateNewMapPoints();
-    cv::Mat ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2);
+    void CreateNewMapPoints();      // ORB SLAM3에서는 쓰이지 않음.. 아마 ORB SLAM2의 잔재로 추정 - 관련 링크(https://github.com/UZ-SLAMLab/ORB_SLAM3/issues/363) 
+
+    /* !
+    * @brief KeyFrame 2개의 Fundamental Matrix를 구하는 함수
+    * @param None
+    * @return 3x3 Fundamental Matrix
+    */
+    cv::Mat ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2);   Fundamental Matrix
     void CreateInitialMapMonocular();
 
     void CheckReplacedInLastFrame();
@@ -343,14 +382,14 @@ protected:
     // Reset IMU biases and compute frame velocity
     /* !
     * @brief  imu의 gyro bias를 재설정하는 함수입니다. 각 프레임 1번, 2번의 imu rotation, delta rotation 데이터를 통해 bias를 구하고 최신화합니다. 
-    * @param  None
+    * @param  프레임이 담겨있는 vector, bias x, bias y, bias z
     * @return None
     */
     void ComputeGyroBias(const vector<Frame*> &vpFs, float &bwx,  float &bwy, float &bwz);
 
     /* !
     * @brief  각 프레임 1번, 2번의 imu velocity, delta position 데이터를 통해 bias를 구하고 최신화합니다. 
-    * @param  None
+    * @param  프레임이 담겨있는 vector, bias acc x, bias acc y, bias acc z
     * @return None
     */
     void ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax,  float &bay, float &baz);
