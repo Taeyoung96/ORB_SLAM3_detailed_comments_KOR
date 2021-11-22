@@ -573,39 +573,45 @@ bool LoopClosing::NewDetectCommonRegions()
 bool LoopClosing::DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                                  std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs)
 {
-    set<MapPoint*> spAlreadyMatchedMPs;
-    nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
+   set<MapPoint*> spAlreadyMatchedMPs; //container 선언
+    nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs); 
+    //best covisiblity를 가진 keyframe과 현재 covisibility keyframe을 비교하여 둘과 matching이 되는 keyframe을 저정한뒤
+    //해당 keyframe에서 mappoint를 추출하고 orb matcher 0.9 기준으로 걸러내고 
+    //이후 걸러진 mappoint들을 searchbyprojection을 통해 (by hamming distance) 최종 num을 뽑아냄.
 
 
-    int nProjMatches = 30;
+    //아래의 int값들은 threshold
+    int nProjMatches = 30; 
     int nProjOptMatches = 50;
     int nProjMatchesRep = 100;
 
+    //위에서 추출한 num값인 nNumProjMatches가 기준값 30이상일때 실행
     if(nNumProjMatches >= nProjMatches)
     {
-        cv::Mat mScw = Converter::toCvMat(gScw);
-        cv::Mat mTwm = pMatchedKF->GetPoseInverse();
-        g2o::Sim3 gSwm(Converter::toMatrix3d(mTwm.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTwm.rowRange(0, 3).col(3)),1.0);
-        g2o::Sim3 gScm = gScw * gSwm;
-        Eigen::Matrix<double, 7, 7> mHessian7x7;
+        cv::Mat mScw = Converter::toCvMat(gScw); //함수 parameter gScw를 convert --> toCvSE3(s*eigR,eigt);
+        cv::Mat mTwm = pMatchedKF->GetPoseInverse(); //함수 parameter pMatchedKF에서 GetPoseInverse matrix 추출
+        g2o::Sim3 gSwm(Converter::toMatrix3d(mTwm.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTwm.rowRange(0, 3).col(3)),1.0); //g20의 matrix 3x3 포함하고있는 Sim3로 선언 (3개 param 구성)
+        g2o::Sim3 gScm = gScw * gSwm; //위의 4x4 matrix 연산
+        Eigen::Matrix<double, 7, 7> mHessian7x7; //Hessian matrix
 
-        bool bFixedScale = mbFixScale;       // TODO CHECK; Solo para el monocular inertial
-        if(mpTracker->mSensor==System::IMU_MONOCULAR && !pCurrentKF->GetMap()->GetIniertialBA2())
-            bFixedScale=false;
+        bool bFixedScale = mbFixScale;       // TODO CHECK; Solo para el monocular inertial , 단순 선언
+        if(mpTracker->mSensor==System::IMU_MONOCULAR && !pCurrentKF->GetMap()->GetIniertialBA2()) //monocular 거나 iniertialBA2 안됬을때
+            bFixedScale=false; //false 
         int numOptMatches = Optimizer::OptimizeSim3(mpCurrentKF, pMatchedKF, vpMatchedMPs, gScm, 10, bFixedScale, mHessian7x7, true);
+        //int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &vpMatches1, g2o::Sim3 &g2oS12, const float th2, const bool bFixScale, Eigen::Matrix<double,7,7> &mAcumHessian, const bool bAllPoints)
+        //간단히 말하면 mpCurrentKF, pMatchedKF에서 매칭된 MPs와 vpMatchedMPs를 조합했을때 gScm으로 estimate를 진행한다. matching이 된 MPs들로 Hessian matrix를 통해 optimize를 진행후 MPs중 inliner에 해당하는 갯수를 추출
 
 
-
-        if(numOptMatches > nProjOptMatches)
+        if(numOptMatches > nProjOptMatches) //위에서 추출한 int값이 nProjOptMatches보다 크면 진행
         {
             g2o::Sim3 gScw_estimation(Converter::toMatrix3d(mScw.rowRange(0, 3).colRange(0, 3)),
-                           Converter::toVector3d(mScw.rowRange(0, 3).col(3)),1.0);
+                           Converter::toVector3d(mScw.rowRange(0, 3).col(3)),1.0); //Sim3 선언
 
-            vector<MapPoint*> vpMatchedMP;
-            vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
+            vector<MapPoint*> vpMatchedMP; //vecter 선언
+            vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));  //vecter resize
 
-            nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw_estimation, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
-            if(nNumProjMatches >= nProjMatchesRep)
+            nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw_estimation, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs); //다시한번 Find matches (vpMatchedMP 변경)
+            if(nNumProjMatches >= nProjMatchesRep) //추출된 map point의 갯수가 nProjMatchesRep보다 클때 성공
             {
                 gScw = gScw_estimation;
                 return true;
@@ -870,10 +876,10 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 bool LoopClosing::DetectCommonRegionsFromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                                 std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs)
 {
-    set<MapPoint*> spAlreadyMatchedMPs(vpMatchedMPs.begin(), vpMatchedMPs.end());
-    nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
+    set<MapPoint*> spAlreadyMatchedMPs(vpMatchedMPs.begin(), vpMatchedMPs.end()); //Matched map point들을 container 형태로 선언 
+    nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs); //위의 선언된 map point들을 pCurrentKF, pMatchedKF에서 matching하고 최적화
 
-    int nProjMatches = 30;
+    int nProjMatches = 30; //기준치 선언
     if(nNumProjMatches >= nProjMatches)
     {
 
@@ -887,42 +893,43 @@ int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatche
                                          set<MapPoint*> &spMatchedMPinOrigin, vector<MapPoint*> &vpMapPoints,
                                          vector<MapPoint*> &vpMatchedMapPoints)
 {
-    int nNumCovisibles = 5;
-    vector<KeyFrame*> vpCovKFm = pMatchedKFw->GetBestCovisibilityKeyFrames(nNumCovisibles);
-    int nInitialCov = vpCovKFm.size();
-    vpCovKFm.push_back(pMatchedKFw);
-    set<KeyFrame*> spCheckKFs(vpCovKFm.begin(), vpCovKFm.end());
-    set<KeyFrame*> spCurrentCovisbles = pCurrentKF->GetConnectedKeyFrames();
-    for(int i=0; i<nInitialCov; ++i)
+    int nNumCovisibles = 5; //covisible 기준치 선언
+    vector<KeyFrame*> vpCovKFm = pMatchedKFw->GetBestCovisibilityKeyFrames(nNumCovisibles); //MatchedKF에서 기준치보다 작은 사이즈의 mvpOrderedConnectedKeyFrames를 반환.
+                                                                                            //mvpOrderedConnectedKeyFrames는 best covisible KF을 추출하는 함수에서 나온 KF이다.
+    int nInitialCov = vpCovKFm.size(); //초기 covisible KF 선언
+    vpCovKFm.push_back(pMatchedKFw); //pMatchedKFw push back
+    set<KeyFrame*> spCheckKFs(vpCovKFm.begin(), vpCovKFm.end()); //spCheckKFs container 선언
+    set<KeyFrame*> spCurrentCovisbles = pCurrentKF->GetConnectedKeyFrames(); //spCurrentCovisbles container 선언, CurrentKF에서 GetConnectedKeyFrames 즉, weight 값을 가져옴.
+    for(int i=0; i<nInitialCov; ++i) //for문 시작
     {
-        vector<KeyFrame*> vpKFs = vpCovKFm[i]->GetBestCovisibilityKeyFrames(nNumCovisibles);
-        int nInserted = 0;
-        int j = 0;
-        while(j < vpKFs.size() && nInserted < nNumCovisibles)
+        vector<KeyFrame*> vpKFs = vpCovKFm[i]->GetBestCovisibilityKeyFrames(nNumCovisibles); //위 함수와 동일
+        int nInserted = 0; //시작점
+        int j = 0; //시작점
+        while(j < vpKFs.size() && nInserted < nNumCovisibles) //while문 시작
         {
             if(spCheckKFs.find(vpKFs[j]) == spCheckKFs.end() && spCurrentCovisbles.find(vpKFs[j]) == spCurrentCovisbles.end())
             {
-                spCheckKFs.insert(vpKFs[j]);
-                ++nInserted;
+                spCheckKFs.insert(vpKFs[j]); //위 조건문 통과하면 spCheckKFs에 입력하고 
+                ++nInserted; //nInserted값 증가
             }
-            ++j;
+            ++j; //j 증가
         }
-        vpCovKFm.insert(vpCovKFm.end(), vpKFs.begin(), vpKFs.end());
+        vpCovKFm.insert(vpCovKFm.end(), vpKFs.begin(), vpKFs.end()); //container에 insert
     }
-    set<MapPoint*> spMapPoints;
-    vpMapPoints.clear();
-    vpMatchedMapPoints.clear();
-    for(KeyFrame* pKFi : vpCovKFm)
+    set<MapPoint*> spMapPoints; //Mappoint container 선언
+    vpMapPoints.clear(); //Map point clear
+    vpMatchedMapPoints.clear(); //vpMatchedMapPoints clear
+    for(KeyFrame* pKFi : vpCovKFm) //for문 시작
     {
-        for(MapPoint* pMPij : pKFi->GetMapPointMatches())
+        for(MapPoint* pMPij : pKFi->GetMapPointMatches()) //GetMapPointMatches 추출
         {
-            if(!pMPij || pMPij->isBad())
-                continue;
+            if(!pMPij || pMPij->isBad()) //결국 vpCovKFm에서 뽑은 pMPij가 is Bad이거나 없거나 하면 
+                continue; //그냥 지나간다.
 
-            if(spMapPoints.find(pMPij) == spMapPoints.end())
+            if(spMapPoints.find(pMPij) == spMapPoints.end()) //pMPij와 end값 비교하고 (초기값은 end)
             {
-                spMapPoints.insert(pMPij);
-                vpMapPoints.push_back(pMPij);
+                spMapPoints.insert(pMPij); //같다면 spMapPoints에 pMPij insert
+                vpMapPoints.push_back(pMPij); //vpMapPointsdpeh insert
             }
         }
     }
@@ -934,7 +941,7 @@ int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatche
     vpMatchedMapPoints.resize(pCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
     int num_matches = matcher.SearchByProjection(pCurrentKF, mScw, vpMapPoints, vpMatchedMapPoints, 3, 1.5);
 
-    return num_matches;
+    return num_matches; //pCurrentKF와 vpMapPoint, vpMatchedMapPoints matching! and optimize
 }
 
 void LoopClosing::CorrectLoop()

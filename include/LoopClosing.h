@@ -147,16 +147,51 @@ protected:
     * @brief LoopClosure KF 및 Merged KF 을 탐색하는 것이 목적
             mlpLoopKeyFrameQueue의 DB값이 존재할 때 작동
     * @call  LoopClosing::Run()
-    * @param boolean
-    * @return 
+    * @param None
+    * @return boolean
     */
     bool NewDetectCommonRegions();
+
+    /* !
+    * @brief bool type 함수로서 간단하게 mappoint matching을 추출하고 설명하면 주어진 기준값 이상일때 
+    * g2o값 ,즉 에러가 제거된 matrix를 뽑아내고 true를 반환한다.    
+    * @param pCurrentKF 현재 Key Frame
+    * @param pMatchedKF Matched된 Key Frame
+    * @param gScw   world to camera Sim3 값
+    * @param nNumProjMatches    Projection 시켰을 때 Matching된 point의 갯수
+    * @param vpMPs  Map point를 담고 있는 vector (pointer로)
+    * @param vpMatchedMPs   Matched된 Map point를 담고 있는 vector (pointer로)
+    * @return 추출된 map point의 갯수가 nProjMatchesRep보다 클때 true, 그렇지 않으면 false
+    */
     bool DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                         std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs);
+
     bool DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, KeyFrame* &pMatchedKF, KeyFrame* &pLastCurrentKF, g2o::Sim3 &g2oScw,
                                      int &nNumCoincidences, std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs);
+
+    /* !
+    * @brief 함수명 그대로 common regions를 last KF과 matched KF 사이에서 찾을수 있나의 확률적인 값. 즉 MatchedKF과 연관성이 있냐의 확률을 뜻함.
+    * @param pCurrentKF 현재 Key Frame
+    * @param pMatchedKF Matched된 Key Frame
+    * @param gScw   world to camera Sim3 값
+    * @param nNumProjMatches    Projection 시켰을 때 Matching된 point의 갯수
+    * @param vpMPs  Map point를 담고 있는 vector (pointer로)
+    * @param vpMatchedMPs   Matched된 Map point를 담고 있는 vector (pointer로)
+    * @return boolean
+    */
     bool DetectCommonRegionsFromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                             std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs);
+
+    /* !
+    * @brief MatchedKF과 CurrentKF에서 Matched MPs를 이용하여 유효한 MPs의 num을 추출하는 함수.
+    * @param pCurrentKF 현재 Key Frame
+    * @param pMatchedKFw 현재 Key Frame과 Covisibility graph로 연결된 Key Frame을 뽑아내기 위함 
+    * @param g2oScw world to camera Sim3
+    * @param spMatchedMPinOrigin 쓰이지 않음
+    * @param vpMapPoints Map point를 담고 있는 vector (pointer로)
+    * @param vpMatchedMapPoints Matched된 Map point를 담고 있는 vector (pointer로)
+    * @return 유효한 Map point의 갯수
+    */
     int FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatchedKFw, g2o::Sim3 &g2oScw,
                                 set<MapPoint*> &spMatchedMPinOrigin, vector<MapPoint*> &vpMapPoints,
                                 vector<MapPoint*> &vpMatchedMapPoints);
