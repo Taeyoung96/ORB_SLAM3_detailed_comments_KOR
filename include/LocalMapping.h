@@ -65,6 +65,12 @@ public:
     void EmptyQueue();
 
     // Thread Synch
+
+    /* !
+     * @brief Stop이 필요할때 사용하는 함수
+     * @param None
+     * @return void
+    */
     void RequestStop();
     
     /* !
@@ -80,14 +86,62 @@ public:
      * @return void
     */
     void RequestResetActiveMap(Map* pMap);
+
+    /* !
+     * @brief 간단하게 local mapping이 stop되는 시점에 실행되는 함수
+     * @param None
+     * @return Stop이 되었을 때 true, 그렇지 않을 때 false를 반환
+    */
     bool Stop();
+
+    /* !
+     * @brief Run()을 끝내고 Map을 배포할 때 사용하는 함수
+     * @param None
+     * @return None
+    */
     void Release();
+
+    /* !
+     * @brief local mapping이 stop 되어있는지 확인할때 사용하는 함수
+     * @param None
+     * @return Stop이면 true, 그렇지 않을 때 false를 반환
+    */
     bool isStopped();
+
+    /* !
+     * @brief stop이 requested가 되었는지 확인할때 사용하는 함수
+     * @param None
+     * @return Stop이 요청되면 true, 그렇지 않을 때 false를 반환
+    */
     bool stopRequested();
+
+    /* !
+     * @brief tracking.cc 에서 accept상태인지 아닌지 확인할때 사용하는 함수
+     * @brief 실질적인 기능은 SetAcceptkeyframs에서 진행하고 마지막으로 true가 되면 해당 함수를 통해 tracking에서 받습니다. 
+     * @param None
+     * @return tracking.cc에서 accept하면 true, 그렇지 않으면 false를 반환
+    */
     bool AcceptKeyFrames();
+
+    /* !
+     * @brief local mapping 종료시점을 알려줍니다. 해당 flag 값이 false되어있다면 tracking에서 데이터를 넘기지 않습니다.
+     * @param flag값
+     * @return None
+    */
     void SetAcceptKeyFrames(bool flag);
+
+    /* !
+     * @brief tracking에서 createNewkeyframe진행시 local mapping이 멈춰져있는지 확인하는 작업
+     * @param tracking에서 설정한 flag값
+     * @return None
+    */
     bool SetNotStop(bool flag);
 
+    /* !
+     * @brief AbortBA가 true가 되어야할때, 즉 keyframe을 받으면 안될때 실행되는 함수
+     * @param None
+     * @return None
+    */
     void InterruptBA();
 
     /* !
@@ -194,6 +248,12 @@ protected:
      * @return void
     */
     void MapPointCulling();
+
+    /* !
+     * @brief neighbors keyframe을 검색하는 함수
+     * @param None
+     * @return void
+    */
     void SearchInNeighbors();
 
     /* !
@@ -203,8 +263,8 @@ protected:
     */
     void KeyFrameCulling();
 
-    cv::Mat ComputeF12(KeyFrame* &pKF1, KeyFrame* &pKF2);
-    cv::Matx33f ComputeF12_(KeyFrame* &pKF1, KeyFrame* &pKF2);
+    cv::Mat ComputeF12(KeyFrame* &pKF1, KeyFrame* &pKF2);       // tracking.cc의 Compute12와 동일합니다. 
+    cv::Matx33f ComputeF12_(KeyFrame* &pKF1, KeyFrame* &pKF2);  // tracking.cc의 Compute12_와 동일합니다. 
 
     /* !
     * @brief SkeySymmetricMatrix를 만들어 주는 함수 (위키백과 : https://ko.wikipedia.org/wiki/%EB%B0%98%EB%8C%80%EC%B9%AD_%ED%96%89%EB%A0%AC)

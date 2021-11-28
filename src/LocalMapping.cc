@@ -955,130 +955,143 @@ void LocalMapping::CreateNewMapPoints()
 void LocalMapping::SearchInNeighbors()
 {
     // Retrieve neighbor keyframes
-    int nn = 10;
-    if(mbMonocular)
+    int nn = 10; //nn 10으로 초기화합니다. 
+    if(mbMonocular) //monocular일때 nn을 20으로 초기화합니다. 
         nn=20;
-    const vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn);
-    vector<KeyFrame*> vpTargetKFs;
-    for(vector<KeyFrame*>::const_iterator vit=vpNeighKFs.begin(), vend=vpNeighKFs.end(); vit!=vend; vit++)
+    
+    /* 
+    / current keyframe 기준 저장되어있던 orderedconnectedkeyframes list에서 nn만틈 가져옵니다.
+    / GetBestCovisibilityKeyFrames는 mvpOrderedConnectedKeyFrames를 return하는 함수입니다. 
+    / nn size보다 mvpOrderedConnectedKeyFrames의 size가 더 크다면 mvpOrderedConnectedKeyFrames의 begin 시점부터 nn개의 keyframe들을 가져옵니다. 
+    */
+    const vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn); 
+
+    vector<KeyFrame*> vpTargetKFs; //KevFrame을 원소로 하는 vector를 선언합니다. 
+
+    for(vector<KeyFrame*>::const_iterator vit=vpNeighKFs.begin(), vend=vpNeighKFs.end(); vit!=vend; vit++) //불러왔던 vpNeighKFs의 첫번째 keyframe부터해서 end까지 for문을 돌립니다. 
     {
-        KeyFrame* pKFi = *vit;
-        if(pKFi->isBad() || pKFi->mnFuseTargetForKF == mpCurrentKeyFrame->mnId)
+        KeyFrame* pKFi = *vit; //KeyFrame pKFi를 선언합니다. 
+        if(pKFi->isBad() || pKFi->mnFuseTargetForKF == mpCurrentKeyFrame->mnId) //불러온 keyframe이 bad flag이거나 mnFuseTargetForKF의 초기값 0과 currentkeyframe id가 동일하면 해당 keyframe은 pass합니다. 
             continue;
-        vpTargetKFs.push_back(pKFi);
-        pKFi->mnFuseTargetForKF = mpCurrentKeyFrame->mnId;
+        vpTargetKFs.push_back(pKFi); //if문에 해당되지 않는다면 vector인 vpTargetKFs에 push back해줍니다. 
+        pKFi->mnFuseTargetForKF = mpCurrentKeyFrame->mnId; //그리고 mnFuseTargetForKF을 current id로 교체합니다. 
     }
+
+    //따라서 for문을 거치고 나면 vpTargetKFs에 유요한 covisibilitykeyFrame들이 저장되게 됩니다. 
 
     // Add some covisible of covisible
     // Extend to some second neighbors if abort is not requested
-    for(int i=0, imax=vpTargetKFs.size(); i<imax; i++)
+    for(int i=0, imax=vpTargetKFs.size(); i<imax; i++) //저장한 vector에서 다시 for문을 돌립니다. 
     {
-        const vector<KeyFrame*> vpSecondNeighKFs = vpTargetKFs[i]->GetBestCovisibilityKeyFrames(20);
-        for(vector<KeyFrame*>::const_iterator vit2=vpSecondNeighKFs.begin(), vend2=vpSecondNeighKFs.end(); vit2!=vend2; vit2++)
+        const vector<KeyFrame*> vpSecondNeighKFs = vpTargetKFs[i]->GetBestCovisibilityKeyFrames(20); //SecondNeighKFs vector를 저장한 vector들에게서 순차적으로 가져옵니다. 
+        for(vector<KeyFrame*>::const_iterator vit2=vpSecondNeighKFs.begin(), vend2=vpSecondNeighKFs.end(); vit2!=vend2; vit2++) //앞에서 진행한 유요한 keyframe가져오는 작업을 한번더 거치게됩니다. 
         {
             KeyFrame* pKFi2 = *vit2;
             if(pKFi2->isBad() || pKFi2->mnFuseTargetForKF==mpCurrentKeyFrame->mnId || pKFi2->mnId==mpCurrentKeyFrame->mnId)
                 continue;
-            vpTargetKFs.push_back(pKFi2);
-            pKFi2->mnFuseTargetForKF=mpCurrentKeyFrame->mnId;
+            vpTargetKFs.push_back(pKFi2); //저장되어있던 keyframe들과 관련있는 keyframe들이 뒷단에 다시 저장되게 됩니다. 
+            pKFi2->mnFuseTargetForKF=mpCurrentKeyFrame->mnId; 
         }
-        if (mbAbortBA)
+        if (mbAbortBA) //중간에 BA가 들어오거나 keyFrame이 insert되는 경우에는 해당 Neighbors keyframe을 찾는것을 중단합니다. 
             break;
     }
+    //따라서 for문을 거치고나면 처음에 current frame의 covisibility와 관련된 keyframe으로 유요한 keyframe을 찾았었는데 그때 찾았던 keyframe을 가지고 covisibility와 관련된 keyframe을 다시 찾아서 vector에 저장되게됩니다. 
 
     // Extend to temporal neighbors
-    if(mbInertial)
+    if(mbInertial) //imu데이터가 존재할때 실행합니다. (해당 value는 mSensor 변수에 의해 결정됩니다.) 
     {
-        KeyFrame* pKFi = mpCurrentKeyFrame->mPrevKF;
-        while(vpTargetKFs.size()<20 && pKFi)
+        KeyFrame* pKFi = mpCurrentKeyFrame->mPrevKF; //previous keyframe을 가져옵니다. 
+        while(vpTargetKFs.size()<20 && pKFi) //while문 시작합니다. 
         {
-            if(pKFi->isBad() || pKFi->mnFuseTargetForKF==mpCurrentKeyFrame->mnId)
+            if(pKFi->isBad() || pKFi->mnFuseTargetForKF==mpCurrentKeyFrame->mnId) //previous keyframe이 bad flag를 가지고있거나 currentkeyframe id와 동일하면 if문이 실행됩니다.
             {
-                pKFi = pKFi->mPrevKF;
+                pKFi = pKFi->mPrevKF; //previous Keyframe으로 교체하고 저장합니다.
                 continue;
             }
-            vpTargetKFs.push_back(pKFi);
-            pKFi->mnFuseTargetForKF=mpCurrentKeyFrame->mnId;
-            pKFi = pKFi->mPrevKF;
+            vpTargetKFs.push_back(pKFi); //해당 KeyFrame을 vector에 저장합니다.
+            pKFi->mnFuseTargetForKF=mpCurrentKeyFrame->mnId; //그리고 마찬가지로 FuseTargetForKF id를 갱신합니다. 
+            pKFi = pKFi->mPrevKF; //마찬가지로 if문 구문을 통과하지 않은 keyframe들을 previous keyframe으로 저장합니다.
         }
     }
 
     // Search matches by projection from current KF in target KFs
-    ORBmatcher matcher;
-    vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
+
+    ORBmatcher matcher; //ORB matcher를 선언합니다. 
+    vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches(); //GetMapPointMatches를 vector로 저장하여 사용합니다. 
+    //해당 vector를 for문 돌립니다. 
     for(vector<KeyFrame*>::iterator vit=vpTargetKFs.begin(), vend=vpTargetKFs.end(); vit!=vend; vit++)
     {
-        KeyFrame* pKFi = *vit;
+        KeyFrame* pKFi = *vit; //각 N번째 target KF들을 사용합니다. 
 
-        matcher.Fuse(pKFi,vpMapPointMatches);
-        if(pKFi->NLeft != -1) matcher.Fuse(pKFi,vpMapPointMatches,true);
+        matcher.Fuse(pKFi,vpMapPointMatches); //target KF과 MapPointMatches의 KF과 비교하여 중복되는 map point를 찾습니다. 
+        if(pKFi->NLeft != -1) matcher.Fuse(pKFi,vpMapPointMatches,true); //fisheye camera 일 경우입니다. 
     }
 
-    if (mbAbortBA)
+    if (mbAbortBA) //AbortBA flag가 true일때 종료합니다. 즉 새로운 keyframe이 들어오고있으면 return합니다. 
         return;
 
     // Search matches by projection from target KFs in current KF
-    vector<MapPoint*> vpFuseCandidates;
-    vpFuseCandidates.reserve(vpTargetKFs.size()*vpMapPointMatches.size());
+    vector<MapPoint*> vpFuseCandidates; //Fuse할 후보군을 저장할 vector를 선언합니다. 
+    vpFuseCandidates.reserve(vpTargetKFs.size()*vpMapPointMatches.size()); //해당 vector사이즈를 mappoint matches와 targetKF의 size를 곱한 크기로 늘려줍니다.
 
-    for(vector<KeyFrame*>::iterator vitKF=vpTargetKFs.begin(), vendKF=vpTargetKFs.end(); vitKF!=vendKF; vitKF++)
+    for(vector<KeyFrame*>::iterator vitKF=vpTargetKFs.begin(), vendKF=vpTargetKFs.end(); vitKF!=vendKF; vitKF++) //위에서 저장했던 TargetKF들을 for문 돌려줍니다. 
     {
-        KeyFrame* pKFi = *vitKF;
+        KeyFrame* pKFi = *vitKF; //각각 N번째 Keyframe입니다. 
 
-        vector<MapPoint*> vpMapPointsKFi = pKFi->GetMapPointMatches();
+        vector<MapPoint*> vpMapPointsKFi = pKFi->GetMapPointMatches(); //각 Keyframe에서 keypoint와 관련있는 map point를 가져옵니다. 
 
-        for(vector<MapPoint*>::iterator vitMP=vpMapPointsKFi.begin(), vendMP=vpMapPointsKFi.end(); vitMP!=vendMP; vitMP++)
+        for(vector<MapPoint*>::iterator vitMP=vpMapPointsKFi.begin(), vendMP=vpMapPointsKFi.end(); vitMP!=vendMP; vitMP++) //해당 map point들을 for문 돌립니다.
         {
-            MapPoint* pMP = *vitMP;
-            if(!pMP)
+            MapPoint* pMP = *vitMP; // N번째 mappoint 선언
+            if(!pMP) //map point가 0값이면 continue합니다. 
                 continue;
-            if(pMP->isBad() || pMP->mnFuseCandidateForKF == mpCurrentKeyFrame->mnId)
+            if(pMP->isBad() || pMP->mnFuseCandidateForKF == mpCurrentKeyFrame->mnId) //mappoint가 bad flag거나 current frame과 중복되면 continue합니다. 
                 continue;
-            pMP->mnFuseCandidateForKF = mpCurrentKeyFrame->mnId;
-            vpFuseCandidates.push_back(pMP);
+            pMP->mnFuseCandidateForKF = mpCurrentKeyFrame->mnId; //현재 mappoint의 fuse 후보군을 current Frame id와 똑같이 만듭니다. 업데이트용
+            vpFuseCandidates.push_back(pMP); //fuse 후보군 vector에 업데이트합니다. 
         }
     }
 
-    matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates);
-    if(mpCurrentKeyFrame->NLeft != -1) matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates,true);
+    matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates); //최종적으로 current keyframe과 업데이트를 마친 fuse condidates들과 matcher.fuse합니다. 
+    if(mpCurrentKeyFrame->NLeft != -1) matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates,true); //이건 fisheye일때 실행됩니다. 
 
 
     // Update points
-    vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
-    for(size_t i=0, iend=vpMapPointMatches.size(); i<iend; i++)
+    vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches(); //따라서 최종적으로 map point가 업데이트 된 current keyframe의 데이터를 mappointmatches에 불러옵니다.
+    for(size_t i=0, iend=vpMapPointMatches.size(); i<iend; i++) //해당 mappoint를 for문 돌립니다. 
     {
-        MapPoint* pMP=vpMapPointMatches[i];
+        MapPoint* pMP=vpMapPointMatches[i]; //N번째 mappoint입니다.
         if(pMP)
         {
-            if(!pMP->isBad())
+            if(!pMP->isBad()) //map point가 정상이면 
             {
-                pMP->ComputeDistinctiveDescriptors();
-                pMP->UpdateNormalAndDepth();
+                pMP->ComputeDistinctiveDescriptors(); //새로운 mappoint와 기존 mappoint와의 거리를 계산합니다. 
+                pMP->UpdateNormalAndDepth(); //normal vector 계산과 max distance, min distance 즉 depth데이터를 계산하여 최신화합니다. 
             }
         }
     }
 
     // Update connections in covisibility graph
-    mpCurrentKeyFrame->UpdateConnections();
+    mpCurrentKeyFrame->UpdateConnections(); //최종 업데이트를 진행합니다.
 }
 
 cv::Mat LocalMapping::ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2)
 {
-    cv::Mat R1w = pKF1->GetRotation();
-    cv::Mat t1w = pKF1->GetTranslation();
-    cv::Mat R2w = pKF2->GetRotation();
-    cv::Mat t2w = pKF2->GetTranslation();
+    cv::Mat R1w = pKF1->GetRotation(); //1번 KF의 rotation data
+    cv::Mat t1w = pKF1->GetTranslation(); //1번 KF의 translation data
+    cv::Mat R2w = pKF2->GetRotation(); //2번 KF의 rotation data
+    cv::Mat t2w = pKF2->GetTranslation(); //2번 KF의 translation data
 
-    cv::Mat R12 = R1w*R2w.t();
-    cv::Mat t12 = -R1w*R2w.t()*t2w+t1w;
+    cv::Mat R12 = R1w*R2w.t(); // delta rotation
+    cv::Mat t12 = -R1w*R2w.t()*t2w+t1w; //delta translation
 
-    cv::Mat t12x = SkewSymmetricMatrix(t12);
+    cv::Mat t12x = SkewSymmetricMatrix(t12); //skew symmetric matrix 형태로 변환
 
-    const cv::Mat &K1 = pKF1->mpCamera->toK();
-    const cv::Mat &K2 = pKF2->mpCamera->toK();
+    const cv::Mat &K1 = pKF1->mpCamera->toK(); //1번 KF의 distortion data
+    const cv::Mat &K2 = pKF2->mpCamera->toK(); //2번 KF의 distortion data
 
 
-    return K1.t().inv()*t12x*R12*K2.inv();
+    return K1.t().inv()*t12x*R12*K2.inv(); //최종 Fundamental matrix 연산
 }
 
 cv::Matx33f LocalMapping::ComputeF12_(KeyFrame *&pKF1, KeyFrame *&pKF2)
@@ -1103,15 +1116,15 @@ cv::Matx33f LocalMapping::ComputeF12_(KeyFrame *&pKF1, KeyFrame *&pKF2)
 void LocalMapping::RequestStop()
 {
     unique_lock<mutex> lock(mMutexStop);
-    mbStopRequested = true;
+    mbStopRequested = true;                 //local mapping을 중단하는 flag
     unique_lock<mutex> lock2(mMutexNewKFs);
-    mbAbortBA = true;
+    mbAbortBA = true;                       //new keyframe이 새로 insert될때 local mapping 기능을 중단하기 위한 flag
 }
 
 bool LocalMapping::Stop()
 {
     unique_lock<mutex> lock(mMutexStop);
-    if(mbStopRequested && !mbNotStop)
+    if(mbStopRequested && !mbNotStop)       //requested가 true거나 Notstop이 false일때 실행됩니다. 
     {
         mbStopped = true;
         cout << "Local Mapping STOP" << endl;
@@ -1137,21 +1150,21 @@ void LocalMapping::Release()
 {
     unique_lock<mutex> lock(mMutexStop);
     unique_lock<mutex> lock2(mMutexFinish);
-    if(mbFinished)
+    if(mbFinished)  // local mapping run이 끝났는지 확인합니다. 
         return;
-    mbStopped = false;
+    mbStopped = false; //stop 관련 bool 타입 변수들을 전부 false처리합니다. 
     mbStopRequested = false;
-    for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++)
+    for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++) //여태 들어온 keyframe을 삭제합니다. 
         delete *lit;
-    mlNewKeyFrames.clear();
+    mlNewKeyFrames.clear(); //여태 들어온 keyframe에 속해있는 관련 data, information을 삭제합니다. 
 
-    cout << "Local Mapping RELEASE" << endl;
+    cout << "Local Mapping RELEASE" << endl; // local mapping한것이 release됩니다. 한국말로는 배포정도...?
 }
 
 bool LocalMapping::AcceptKeyFrames()
 {
     unique_lock<mutex> lock(mMutexAccept);
-    return mbAcceptKeyFrames;
+    return mbAcceptKeyFrames;       //해당 변수도 SetAcceptkeyframes에서 결정합니다. 
 }
 
 void LocalMapping::SetAcceptKeyFrames(bool flag)
@@ -1164,12 +1177,13 @@ bool LocalMapping::SetNotStop(bool flag)
 {
     unique_lock<mutex> lock(mMutexStop);
 
-    if(flag && mbStopped)
+    if(flag && mbStopped) //tracking에서 설정한 flag값과 mbstopped값이 다르면 무조건 false됩니다.  
         return false;
 
-    mbNotStop = flag;
+    mbNotStop = flag; //mbNotstop 값을 flag로 저장합니다. 
 
-    return true;
+    return true; //flag와 mbstopped가 같으면 true를 반환합니다.
+    //  --> 결론적으로 tracking에서 createnewkeyframe진행시 local mapping이 멈춰져있는지 확인하는 작업입니다.
 }
 
 void LocalMapping::InterruptBA()
