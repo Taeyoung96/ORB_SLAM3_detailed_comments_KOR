@@ -61,7 +61,10 @@ ORB SLAM3 코드를 볼 때, 코드에 대한 이해도를 빠르게 해줄 [ORB
 - C. Forster, L. Carlone, F. Dellaert and D. Scaramuzza, **"On-Manifold Preintegration for Real-Time Visual--Inertial Odometry,"** in IEEE Transactions on Robotics, vol. 33, no. 1, pp. 1-21, Feb. 2017 [[Paper](https://ieeexplore.ieee.org/document/7557075)]  
     > ORB SLAM3에서 IMU preintegration을 진행할 때 Reference가 된 논문.  
 
-## Original Readme.md
+<details>
+<summary> Original Readme.md </summary>
+<div markdown="1">
+
 
 ### V0.4: Beta version, 21 April 2021
 **Authors:** Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, [José M. M. Montiel](http://webdiis.unizar.es/~josemari/), [Juan D. Tardos](http://webdiis.unizar.es/~jdtardos/).
@@ -275,3 +278,5 @@ Once ORB-SLAM3 has loaded the vocabulary, press space in the rosbag tab.
 # 7. Time analysis
 A flag in `include\Config.h` activates time measurements. It is necessary to uncomment the line `#define REGISTER_TIMES` to obtain the time stats of one execution which is shown at the terminal and stored in a text file(`ExecTimeMean.txt`).
 
+</div>
+</details>
