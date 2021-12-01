@@ -166,14 +166,14 @@ public:
     /* !
      * @brief initializing 수행 여부확인
      * @param None
-     * @return void
+     * @return Initializing을 수행하고 있으면 true, 그렇지 않으면 false
     */
     bool IsInitializing();
 
     /* !
      * @brief current keyframe 시간 확인, 없으면 0 대입
      * @param None
-     * @return void
+     * @return TimeStamp
     */
     double GetCurrKFTime();
 
