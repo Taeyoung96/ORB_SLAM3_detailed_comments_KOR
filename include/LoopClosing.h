@@ -208,6 +208,13 @@ protected:
     void CorrectLoop();
 
     void MergeLocal();
+
+    /* !
+    * @brief Merge할 부분을 찾았을 때 IMU를 활용해서 Current Map에 있는 정보들(Key Frame, Map point, Essential Graph)을
+    * @brief Merge Map에 있는 정보들과 합치고 최적화 
+    * @param None
+    * @return None
+    */
     void MergeLocal2();
 
     void ResetIfRequested();

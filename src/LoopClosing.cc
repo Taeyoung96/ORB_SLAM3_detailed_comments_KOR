@@ -1758,43 +1758,47 @@ void LoopClosing::MergeLocal()
 
 void LoopClosing::MergeLocal2()
 {
-    cout << "Merge detected!!!!" << endl;
+    cout << "Merge detected!!!!" << endl;   // Merge할 부분을 찾았다고 출력
 
     int numTemporalKFs = 11; //TODO (set by parameter): Temporal KFs in the local window if the map is inertial.
+    // MergeLocal()에서는 15로 초기화. IMU를 활용하면 조금 더 적은 KeyFrames로 merge를 진행 
 
     //Relationship to rebuild the essential graph, it is used two times, first in the local window and later in the rest of the map
-    KeyFrame* pNewChild;
-    KeyFrame* pNewParent;
+    // Essential graph를 재구축하기 위한 관계 : 두번 사용 1. Local window에서 사용, 2. 나머지 맵에서 사용
+    KeyFrame* pNewChild;        // 새로운 자식 노드 Frame pointer
+    KeyFrame* pNewParent;       // 새로운 부모 노드 Frame pointer
 
-    vector<KeyFrame*> vpLocalCurrentWindowKFs;
-    vector<KeyFrame*> vpMergeConnectedKFs;
+    vector<KeyFrame*> vpLocalCurrentWindowKFs;   // 이 변수는 MergeLocal2()에서는 쓰이지 않음. (MergeLocal에서만 사용)
+    vector<KeyFrame*> vpMergeConnectedKFs;       // Merge할 때 연결되는 KeyFrame을 모아두기 위한 Vector
 
-    KeyFrameAndPose CorrectedSim3, NonCorrectedSim3;
+    KeyFrameAndPose CorrectedSim3, NonCorrectedSim3;    // KeyFrameAndPose: map<KeyFrame*, g2o::Sim3>
     // NonCorrectedSim3[mpCurrentKF]=mg2oLoopScw;
 
     // Flag that is true only when we stopped a running BA, in this case we need relaunch at the end of the merge
+    // 실행 중인 BA를 중지한 경우에만 true인 플래그입니다. 이 경우 Merge가 끝날 때 다시 시작해야 합니다.
     bool bRelaunchBA = false;
 
-    cout << "Check Full Bundle Adjustment" << endl;
+    cout << "Check Full Bundle Adjustment" << endl; 
     // If a Global Bundle Adjustment is running, abort it
-    if(isRunningGBA())
+    if(isRunningGBA())      // GBA가 실행되고 있는지 확인 : mbRunningGBA이라는 변수의 상태 확인
     {
         unique_lock<mutex> lock(mMutexGBA);
-        mbStopGBA = true;
+        mbStopGBA = true;   // mbStopGBA를 true로 바꾸므로써, 중단했다는 것을 알려줌
 
-        mnFullBAIdx++;
+        mnFullBAIdx++;  // Bundle Adjustment Index 1 증가
 
         if(mpThreadGBA)
         {
-            mpThreadGBA->detach();
-            delete mpThreadGBA;
+            cout << "GBA running... Abort!" << endl;
+            mpThreadGBA->detach();  // 쓰레드를 떼어내서 독립적으로 작동하게끔한다.
+            delete mpThreadGBA; // 쓰레드 메모리 해제 - 참고 : C++ 스레드의 분류와 사용법[https://m.blog.naver.com/PostView.naver?isHttpsRedirect=true&blogId=ghoism51&logNo=220190125981]  
         }
-        bRelaunchBA = true;
+        bRelaunchBA = true; // 실행중인 Bundle Adjustment를 중지했으므로 true로 값을 바꿈
     }
 
 
     cout << "Request Stop Local Mapping" << endl;
-    mpLocalMapper->RequestStop();
+    mpLocalMapper->RequestStop();   // Stop일 때까지 while문을 계속 돈다.
     // Wait until Local Mapping has effectively stopped
     while(!mpLocalMapper->isStopped())
     {
@@ -1802,41 +1806,52 @@ void LoopClosing::MergeLocal2()
     }
     cout << "Local Map stopped" << endl;
 
+    // 병합 맵(Merge Map)은 현재 맵(Current Map)의 KF 및 MP의 로컬 창(Local window)과 함께 새 활성 맵(new active map)이 됩니다.
+    // 나중에 실시간 추적을 유지하기 위해 현재 지도(Current Map)의 요소가 새로운 활성 지도(new active map) 참조로 변환됩니다.
     Map* pCurrentMap = mpCurrentKF->GetMap();
     Map* pMergeMap = mpMergeMatchedKF->GetMap();
 
     {
-        float s_on = mSold_new.scale();
-        cv::Mat R_on = Converter::toCvMat(mSold_new.rotation().toRotationMatrix());
-        cv::Mat t_on = Converter::toCvMat(mSold_new.translation());
+        // 변수명 on은 old_new의 줄임말로 추정
+        float s_on = mSold_new.scale(); // Local Window KeyFrame to Current Key Frame의 Sim3에서 scale 값  
+        cv::Mat R_on = Converter::toCvMat(mSold_new.rotation().toRotationMatrix()); // Sim3에서 Rotation Matrix
+        cv::Mat t_on = Converter::toCvMat(mSold_new.translation()); // Sim3에서 translation vector
 
-        unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
+        unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate); // lock으로 Current Map이 변하지 않도록 한다.
 
-        mpLocalMapper->EmptyQueue();
-
+        // LocalMapping에서  mlNewKeyFrames에 데이터가 없애기 위해 사용하는 함수 
+        // (Current Key Frame에 mlNewKeyFrames의 첫번째 원소를 계속 대입)
+        mpLocalMapper->EmptyQueue();    
+        
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-        bool bScaleVel=false;
+        bool bScaleVel=false;   // Scaled Velocity값(scale이 1이 아니면 true로 바뀜)
         if(s_on!=1)
             bScaleVel=true;
         mpAtlas->GetCurrentMap()->ApplyScaledRotation(R_on,s_on,bScaleVel,t_on);
         mpTracker->UpdateFrameIMU(s_on,mpCurrentKF->GetImuBias(),mpTracker->GetLastKeyFrame());
+        // Current Frame의 IMU값을 update
 
         std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
     }
 
-    const int numKFnew=pCurrentMap->KeyFramesInMap();
+    const int numKFnew=pCurrentMap->KeyFramesInMap();   // Current Map에 있는 Map point들의 갯수를 가져온다.
 
+    // Sensor가 IMU_monocular거나 IMU_stereo일 경우, mbIMU_BA2라는 변수가 false일 경우 (LocalMapping::Run()에서 "start VIBA 2" 다음 true로 변경)
     if((mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO)&& !pCurrentMap->GetIniertialBA2()){
         // Map is not completly initialized
-        Eigen::Vector3d bg, ba;
+        // Map은 완전히 초기화 되지 않았다고 판단
+        Eigen::Vector3d bg, ba; // 우선 0으로 초기화
         bg << 0., 0., 0.;
         ba << 0., 0., 0.;
-        Optimizer::InertialOptimization(pCurrentMap,bg,ba);
-        IMU::Bias b (ba[0],ba[1],ba[2],bg[0],bg[1],bg[2]);
-        unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
-        mpTracker->UpdateFrameIMU(1.0f,b,mpTracker->GetLastKeyFrame());
+        Optimizer::InertialOptimization(pCurrentMap,bg,ba); 
+        // 두번째 껏 :  void static InertialOptimization(Map *pMap, Eigen::Vector3d &bg, Eigen::Vector3d &ba, float priorG = 1e2, float priorA = 1e6);
+        // Current Map 최적화 (bias 값 업데이트)
+        IMU::Bias b (ba[0],ba[1],ba[2],bg[0],bg[1],bg[2]);  // 바뀐 bias을 활용해서 b라는 변수로 초기화
+        unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate); // Map update가 되지 않도록 lock
+        mpTracker->UpdateFrameIMU(1.0f,b,mpTracker->GetLastKeyFrame()); // IMU와 관련된 값들을 Key Frame에 update
 
         // Set map initialized
+        // IMU와 Map에 관련된 변수들 초기화
         pCurrentMap->SetIniertialBA2();
         pCurrentMap->SetIniertialBA1();
         pCurrentMap->SetImuInitialized();
@@ -1844,55 +1859,68 @@ void LoopClosing::MergeLocal2()
     }
 
     // Load KFs and MPs from merge map
+    // KeyFrames와 Map points들을 Merge map으로 부터 가져옵니다.
     {
         // Get Merge Map Mutex (This section stops tracking!!)
+        // Merge Map을 lock을 걸어둔다. (Tracking을 멈춘다.)
         unique_lock<mutex> currentLock(pCurrentMap->mMutexMapUpdate); // We update the current map with the Merge information
+        // Merge 정보를 이용하여 Current Map을 Update한다.
         unique_lock<mutex> mergeLock(pMergeMap->mMutexMapUpdate); // We remove the Kfs and MPs in the merged area from the old map
+        // Merge map update - Old map에서 얻은 Key Frames와 Map points들을 제거한다.
+
+        vector<KeyFrame*> vpMergeMapKFs = pMergeMap->GetAllKeyFrames(); // Merge Map으로부터 Key Frames를 가져와 vector에 저장 (pointer 형식)
+        vector<MapPoint*> vpMergeMapMPs = pMergeMap->GetAllMapPoints(); // Merge Map으로부터 Map points들을 가져와 vector에 저장 (pointer 형식)
 
 
-        vector<KeyFrame*> vpMergeMapKFs = pMergeMap->GetAllKeyFrames();
-        vector<MapPoint*> vpMergeMapMPs = pMergeMap->GetAllMapPoints();
-
-
-        for(KeyFrame* pKFi : vpMergeMapKFs)
+        for(KeyFrame* pKFi : vpMergeMapKFs) // Merge map Key Frames에 있는 Key Frames들을 순회
         {
+            // Key Frame이 좋지 않거나, Merge map에서 가져온 것이 아닐 때
             if(!pKFi || pKFi->isBad() || pKFi->GetMap() != pMergeMap)
             {
-                continue;
+                continue;   // Skip
             }
 
             // Make sure connections are updated
-            pKFi->UpdateMap(pCurrentMap);
-            pCurrentMap->AddKeyFrame(pKFi);
-            pMergeMap->EraseKeyFrame(pKFi);
+            pKFi->UpdateMap(pCurrentMap);   // Key Frame의 Map을 Current Map으로 update
+            pCurrentMap->AddKeyFrame(pKFi); // Current Map에도 Key Frame 추가
+            pMergeMap->EraseKeyFrame(pKFi); // Merge map에 있는 Key Frame 제거
         }
+        // 위 for문의 결과 : Merge Map Key Frames >> Current Map Key Frames로 업데이트
 
-        for(MapPoint* pMPi : vpMergeMapMPs)
+        for(MapPoint* pMPi : vpMergeMapMPs) // Merge map Map points에 있는 Map point들을 순회
         {
+            // Map point가 좋지 않거나, Merge map에서 가져온 것이 아닐 때
             if(!pMPi || pMPi->isBad() || pMPi->GetMap() != pMergeMap)
-                continue;
+                continue; // Skip
 
-            pMPi->UpdateMap(pCurrentMap);
-            pCurrentMap->AddMapPoint(pMPi);
-            pMergeMap->EraseMapPoint(pMPi);
+            pMPi->UpdateMap(pCurrentMap);   // Map point의 Map을 Current Map으로 update
+            pCurrentMap->AddMapPoint(pMPi); // Current Map에도 Map point 추가
+            pMergeMap->EraseMapPoint(pMPi); // Merge map에 있는 Map point 제거
         }
+        // 위 for문의 결과 : Merge Map Map points >> Current Map Map points로 업데이트
 
         // Save non corrected poses (already merged maps)
-        vector<KeyFrame*> vpKFs = pCurrentMap->GetAllKeyFrames();
-        for(KeyFrame* pKFi : vpKFs)
+        // NonCorrectedSim3 저장
+        vector<KeyFrame*> vpKFs = pCurrentMap->GetAllKeyFrames();   // Current Map에서 KeyFrame을 모두 Vector에 저장
+        for(KeyFrame* pKFi : vpKFs) // Key Frame들을 순회
         {
-            cv::Mat Tiw=pKFi->GetPose();
-            cv::Mat Riw = Tiw.rowRange(0,3).colRange(0,3);
-            cv::Mat tiw = Tiw.rowRange(0,3).col(3);
-            g2o::Sim3 g2oSiw(Converter::toMatrix3d(Riw),Converter::toVector3d(tiw),1.0);
-            NonCorrectedSim3[pKFi]=g2oSiw;
+            cv::Mat Tiw=pKFi->GetPose();    // world to i번째 KeyFrame의 transformation matrix (4x4)
+            cv::Mat Riw = Tiw.rowRange(0,3).colRange(0,3);  // world to i번째 KeyFrame의 Rotatoin matrix
+            cv::Mat tiw = Tiw.rowRange(0,3).col(3);         // world to i번째 KeyFrame의 Translation vector
+            g2o::Sim3 g2oSiw(Converter::toMatrix3d(Riw),Converter::toVector3d(tiw),1.0);    // Sim3변수 초기화 (scale 1.0)
+            NonCorrectedSim3[pKFi]=g2oSiw;  // NonCorrectedSim3에 대입
         }
     }
 
-    pMergeMap->GetOriginKF()->SetFirstConnection(false);
+    // Essential Graph Rebuilding
+
+    // Q. mpMergeMatchedKF는 Merge Map에 있는 Key Frame 하나를 pointer로 가르키는 건지?
+    // 보충 설명 자료 : https://docs.google.com/presentation/d/1vIQHRSs-igaN05jzvCQnff68pF1Uq8kETocFvo0LxbM/edit?usp=sharing
+
+    pMergeMap->GetOriginKF()->SetFirstConnection(false);    // Merge Map에 initial Key Frame을 First Connection으로 지정하지 않습니다.
     pNewChild = mpMergeMatchedKF->GetParent(); // Old parent, it will be the new child of this KF
     pNewParent = mpMergeMatchedKF; // Old child, now it will be the parent of its own parent(we need eliminate this KF from children list in its old parent)
-    mpMergeMatchedKF->ChangeParent(mpCurrentKF);
+    mpMergeMatchedKF->ChangeParent(mpCurrentKF);    // Parent Key Frame에 Add Child()
     while(pNewChild)
     {
         pNewChild->EraseChild(pNewParent); // We remove the relation between the old parent and the new for avoid loop
@@ -1900,7 +1928,6 @@ void LoopClosing::MergeLocal2()
         pNewChild->ChangeParent(pNewParent);
         pNewParent = pNewChild;
         pNewChild = pOldParent;
-
     }
 
     vector<MapPoint*> vpCheckFuseMapPoint; // MapPoint vector from current map to allow to fuse duplicated points with the old map (merge)
