@@ -1552,8 +1552,8 @@ void LoopClosing::MergeLocal()
         pNewChild = pOldParent;
 
     }
-
-    //Update the connections between the local window
+    
+    //Update the connections between the local window    
     mpMergeMatchedKF->UpdateConnections();
 
     vpMergeConnectedKFs = mpMergeMatchedKF->GetVectorCovisibleKeyFrames();
@@ -1930,36 +1930,62 @@ void LoopClosing::MergeLocal2()
         pNewChild = pOldParent;
     }
 
-    vector<MapPoint*> vpCheckFuseMapPoint; // MapPoint vector from current map to allow to fuse duplicated points with the old map (merge)
-    vector<KeyFrame*> vpCurrentConnectedKFs;
+    // ===================================================================================================
+    // mpMergeMatchedKF은 DetectCommonRegionsFromBoW()에서 결정
+    // DetectCommonRegionsFromBoW() 요약
+    //  1. BoW DB와 CurrKF와 대응되는 후보군 KF들을 가져옴
+    //  2. 각각의 후보군 KF으로부터 projection score을 비교함
+    //  3. projection score가 임계값 이상이면 후보군 KF에서 5개의 covisible KF들을 가져온 후, map point와 얼마나 매칭되는지 확인함
+    //  4. 또한 CurrKF의 covisible KF과 map point를 비교하여 연속적인 3개의 KF과 매칭이 되는지 확인함
+    //  5. (3, 4)의 과정을 반복하여 각각의 후보군 KF을 모두 비교한 다음, 3번의 매칭값이 가장 큰 것을 best 후보KF으로 결정
+    //  6. best 후보KF의 포인터를 mpMergeMatchedKF에 인계
 
-    mvpMergeConnectedKFs.push_back(mpMergeMatchedKF);
-    vector<KeyFrame*> aux = mpMergeMatchedKF->GetVectorCovisibleKeyFrames();
-    mvpMergeConnectedKFs.insert(mvpMergeConnectedKFs.end(), aux.begin(), aux.end());
-    if (mvpMergeConnectedKFs.size()>6)
-        mvpMergeConnectedKFs.erase(mvpMergeConnectedKFs.begin()+6,mvpMergeConnectedKFs.end());
+    // Current/Old map의 중복된 점을 융합(fuse) 및 병합(merge) 하기위한 MapPoint 벡터
+    vector<MapPoint*> vpCheckFuseMapPoint;   // MapPoint vector from current map to allow to fuse duplicated points with the old map (merge)
+    vector<KeyFrame*> vpCurrentConnectedKFs; // CurrKF과 Cov_CurrKF들을 포함하는 벡터
+    
+    mvpMergeConnectedKFs.push_back(mpMergeMatchedKF); // mvpMergeConnectedKFs는 다른곳에서 사용안했기 때문에 여기서 최초사용
+                                                      // mpMergeMatchedKF을 mvpMergeConnectedKFs에 삽입
+    vector<KeyFrame*> aux = mpMergeMatchedKF->GetVectorCovisibleKeyFrames(); // MergeMatchedKF의 CovisibleKF 벡터 가져옴
+    mvpMergeConnectedKFs.insert(mvpMergeConnectedKFs.end(), aux.begin(), aux.end()); // mvpMergeConnectedKFs에 aux(MerageMatchedKF의 CovKF)를 삽입
+    // mvpMergeConnectedKFs 상태: [mpMergeMatchedKF, (Cov_mpMergeMatchedKF)]
 
-    mpCurrentKF->UpdateConnections();
-    vpCurrentConnectedKFs.push_back(mpCurrentKF);
-    aux = mpCurrentKF->GetVectorCovisibleKeyFrames();
-    vpCurrentConnectedKFs.insert(vpCurrentConnectedKFs.end(), aux.begin(), aux.end());
-    if (vpCurrentConnectedKFs.size()>6)
-        vpCurrentConnectedKFs.erase(vpCurrentConnectedKFs.begin()+6,vpCurrentConnectedKFs.end());
+    if (mvpMergeConnectedKFs.size()>6) // mvpMergeConnectedKFs의 element 수가 6개 이상이면
+        mvpMergeConnectedKFs.erase(mvpMergeConnectedKFs.begin()+6,mvpMergeConnectedKFs.end()); // 6개를 제외한 나머지를 삭제
+    // mvpMergeConnectedKFs 상태: [mpMergeMatchedKF, (Cov_mpMergeMatchedKF)]
+
+    mpCurrentKF->UpdateConnections(); // mpCurrentKF 업데이트
+    vpCurrentConnectedKFs.push_back(mpCurrentKF); // vpCurrentConnectedKFs에 currentKF 추가
+    
+    aux = mpCurrentKF->GetVectorCovisibleKeyFrames(); // CurrentKF의 CovKF를 가져옴
+    vpCurrentConnectedKFs.insert(vpCurrentConnectedKFs.end(), aux.begin(), aux.end()); // mvpMergeConnectedKFs에 aux(CurrKF의 CovKF)를 삽입
+    // vpCurrentConnectedKFs 상태: [mpCurrentKF, (Cov_mpCurrentKF)]
+
+    if (vpCurrentConnectedKFs.size()>6) // vpCurrentConnectedKFs element 수가 6개 이상이면
+        vpCurrentConnectedKFs.erase(vpCurrentConnectedKFs.begin()+6,vpCurrentConnectedKFs.end()); // 6개를 제외한 나머지를 삭제
+    // vpCurrentConnectedKFs 상태: [mpCurrentKF, (Cov_mpCurrentKF)]
 
     set<MapPoint*> spMapPointMerge;
-    for(KeyFrame* pKFi : mvpMergeConnectedKFs)
+    for(KeyFrame* pKFi : mvpMergeConnectedKFs) // mvpMergeConnectedKFs: [mpMergeMatchedKF, (Cov_mpMergeMatchedKF)]
     {
-        set<MapPoint*> vpMPs = pKFi->GetMapPoints();
-        spMapPointMerge.insert(vpMPs.begin(),vpMPs.end());
-        if(spMapPointMerge.size()>1000)
+        set<MapPoint*> vpMPs = pKFi->GetMapPoints(); // MapPoint를 가져옴
+        spMapPointMerge.insert(vpMPs.begin(),vpMPs.end()); // 가져온 MapPoint를 삽입
+        if(spMapPointMerge.size()>1000) // mpMergeMatchedKF 및 Cov_mpMergeMatchedKF의 MapPoint를 가져오고, 개수가 1000 이상이면 break
             break;
     }
 
-    vpCheckFuseMapPoint.reserve(spMapPointMerge.size());
-    std::copy(spMapPointMerge.begin(), spMapPointMerge.end(), std::back_inserter(vpCheckFuseMapPoint));
+    vpCheckFuseMapPoint.reserve(spMapPointMerge.size()); // spMapPointMerge.size()만큼 크기 할당
+    std::copy(spMapPointMerge.begin(), spMapPointMerge.end(), std::back_inserter(vpCheckFuseMapPoint)); // spMapPointMerge를 vpCheckFuseMapPoint에 복사
 
+    // SearchAndFuse()
+    // vector<KeyFrame*> vpCurrentConnectedKFs: [mpCurrentKF, (Cov_mpCurrentKF)]
+    // vector<MapPoint*> vpCheckFuseMapPoint: Current/Old map의 중복된 점을 융합(fuse) 및 병합(merge) 하기위한 MapPoint 벡터
+    //                                      : mvpMergeConnectedKFs의 MapPoint를 포함    
+    // mvpMergeConnectedKFs의 MapPoint를 [mpCurrentKF, (Cov_mpCurrentKF)]에 투영
+    // 투영하여 overlap이 존재하면 Merged_MapPoint를 Curr_MapPoint로 대체
     SearchAndFuse(vpCurrentConnectedKFs, vpCheckFuseMapPoint);
 
+    // [currenKF, cov_currentKF]에 대한 Connection update
     for(KeyFrame* pKFi : vpCurrentConnectedKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -1967,6 +1993,8 @@ void LoopClosing::MergeLocal2()
 
         pKFi->UpdateConnections();
     }
+
+    // [MergeKF, cov_MergeKF]에 대한 Connection update
     for(KeyFrame* pKFi : mvpMergeConnectedKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -1975,14 +2003,18 @@ void LoopClosing::MergeLocal2()
         pKFi->UpdateConnections();
     }
 
-    if (numKFnew<10){
+    if (numKFnew<10){ // Current Map에 있는 Map point들의 개수가 10 미만이면 
         mpLocalMapper->Release();
         return;
     }
 
     // Perform BA
     bool bStopFlag=false;
-    KeyFrame* pCurrKF = mpTracker->GetLastKeyFrame();
+    KeyFrame* pCurrKF = mpTracker->GetLastKeyFrame(); //
+
+    // LocalKF-pose, mapPoints, IMU 최적화
+    // MergeLocal()의 LocalBundleAdjustment()함수와 같음
+    // MapPoint 경우 pMergeMap이 모두 제거되고 CurrentMap에 이식되었기 때문에, pCurrentMap만 최적화 수행
     Optimizer::MergeInertialBA(pCurrKF, mpMergeMatchedKF, &bStopFlag, pCurrentMap,CorrectedSim3);
 
     // Release Local Mapping.
