@@ -42,40 +42,6 @@ using namespace std;
 namespace ORB_SLAM3
 {
 
-/* system, orbvocabulary, framedrawer, mapdrawer, atlas, keyframedatabase --> 각각의 class들을 포인터로 선언, 나중에 tracking중에 해당 클래스의 변수들을 가져올때 대부분 사용한다.
-
-strSettingPath, sensor, nameSeq --> 상수로 선언함으로써 나중에 고정변수로 사용한다.
-
-Tracking states를 나타내는 변수  NO_IMAGES_YET=0
-
-int mSensor --> 사용할 센서 (image , imu ...)
-
-int mTrackedFr, bool mbStep --> tracking frame을 진행하고 result를 통한 pose estimate (bool 타입)
-
-bool mbOnlyTracking; --> True if local mapping is deactivated and we are performing only localization 
-
-bool mbVO -->     // In case of performing only localization, this flag is true when there are no matches to
-  points in the map. Still tracking will continue if there are enough matches with temporal points.
-  In that case we are doing visual odometry. The system will try to do relocalization to recover
-  "zero-drift" localization to the map. 해석해보면 localization모드일때(local mapping x), 만약 맵에서 point들과 match가 이루어지지 않는다면 true로 된다. 이게 아니라 만약에 순간적인 point들과 match가 충분히 이루어진다면 tracking은 계속될것이다. 
-  그렇게되면 우리는 visiual odometry를 진행할수 있다. (시각적인 경로탐지?정도로 해석가능할듯) 그러고나면 정상적으로 relocalization이 이루어지고 drift를 최소화시킨다.
-
-mpORBVocabulary, mpKeyFrameDB --> Bag of words
-
-mpInitializer --> monocular에서만 필요함. 
-
-mpSystem --> system 멤버변수
-
-mpViewer, mpFrameDrawer ,mpMapDrawer  --> map viewer에 사용
-
-mpAtlas
-
-mnLastRelocFrameId, time_recently_lost, time_recently_lost_visual, mnInitialFrameId, mnFirstFrameId --> Last Frame, KeyFrame and Relocalisation Info
-
-mbCreatedMap
-
-mpCamera2 
-*/
 
 Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, const string &_nameSeq):
     mState(NO_IMAGES_YET), mSensor(sensor), mTrackedFr(0), mbStep(false),
@@ -84,57 +50,49 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0), time_recently_lost_visual(2.0),
     mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr)
 {
-    //해당 함수는 tracking을 하기 위한 초기값 세팅의 시작으로 볼수 있습니다.
-
     // Load camera parameters from settings file
-    //config 파일에서 fx,fy,cx,cy등등을 가져옵니다. 해당 config파일은 example파일에 예시가 있습니다. 
     cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
 
-    bool b_parse_cam = ParseCamParamFile(fSettings); //config파일에서 불러온 parameter들로 parsecamparamfile함수에서 연산을 합니다. 
-    if(!b_parse_cam) //위의 bool타입 함수, 즉 camera parameter가 잘 들어왔는지 확인하는작업입니다. 
+    bool b_parse_cam = ParseCamParamFile(fSettings);
+    if(!b_parse_cam)
     {
-        std::cout << "*Error with the camera parameters in the config file*" << std::endl; //에러메세지
+        std::cout << "*Error with the camera parameters in the config file*" << std::endl;
     }
 
     // Load ORB parameters
-    //camera parameter와 마찬가지로 ORB parameter를 불러와서 연산을 합니다. 해당 parameter들도 example파일에서 .yaml파일에 보면 나와있습니다.
     bool b_parse_orb = ParseORBParamFile(fSettings);
-    if(!b_parse_orb) //camera 부분과 마찬가지입니다. 
+    if(!b_parse_orb)
     {
         std::cout << "*Error with the ORB parameters in the config file*" << std::endl;
     }
 
-    initID = 0; lastID = 0; //초기값 선언
+    initID = 0; lastID = 0;
 
     // Load IMU parameters
-    bool b_parse_imu = true; //초기 bool값 true선언 
-    if(sensor==System::IMU_MONOCULAR || sensor==System::IMU_STEREO) //IMU MONOCULAR OR IMU STEREO 일때만 실행됩니다. 
+    bool b_parse_imu = true;
+    if(sensor==System::IMU_MONOCULAR || sensor==System::IMU_STEREO)
     {
-        b_parse_imu = ParseIMUParamFile(fSettings); //IMU parameter 값 세팅 
-        if(!b_parse_imu) //parameter가 재대로 입력되었나 안되었나 판단합니다.
+        b_parse_imu = ParseIMUParamFile(fSettings);
+        if(!b_parse_imu)
         {
             std::cout << "*Error with the IMU parameters in the config file*" << std::endl;
         }
 
-        //MaxFrame값을 FrameToResetIMU값으로 받는데 이 값은 fps값으로 결정됩니다. 
-        //예를 들어 imu fps가 200hz면 200값으로 설정되며 이 값은 각 프레임별로 기준값 계산에 사용됩니다.
         mnFramesToResetIMU = mMaxFrames;
     }
 
-    mbInitWith3KFs = false; //?? 아마 사용이 안되는 변수인걸로 예상합니다. ORB SLAM2 code의 잔해(?)같습니다. 
+    mbInitWith3KFs = false;
 
-    mnNumDataset = 0; //dataset number 초기화
+    mnNumDataset = 0;
 
-    if(!b_parse_cam || !b_parse_orb || !b_parse_imu) //cam, orb, imu에 대한 parsing이 재대로 이루어졌는지 체크합니다. 
+    if(!b_parse_cam || !b_parse_orb || !b_parse_imu)
     {
         std::cerr << "**ERROR in the config file, the format is not correct**" << std::endl;
-        
-        //try, catch 구문이 재대로 작성되지 않았습니다. 아직 수정해야되는 부분이라고 생각합니다. 
         try
         {
             throw -1;
         }
-        catch(exception &e) 
+        catch(exception &e)
         {
 
         }
@@ -155,8 +113,8 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     vdPoseOpt_ms.clear();
 #endif
 
-    vnKeyFramesLM.clear(); //keyframe vector clear
-    vnMapPointsLM.clear(); //map points vector clear
+    vnKeyFramesLM.clear();
+    vnMapPointsLM.clear();
 }
 
 #ifdef REGISTER_TIMES
@@ -535,30 +493,29 @@ Tracking::~Tracking()
 
 }
 
-bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들을 parsing하는 함수입니다. 
+bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
 {
-    mDistCoef = cv::Mat::zeros(4,1,CV_32F); //4x1 사이즈 zero matrix 생성
+    mDistCoef = cv::Mat::zeros(4,1,CV_32F);
     cout << endl << "Camera Parameters: " << endl;
-    bool b_miss_params = false; //b_miss_params 값 false 선언
+    bool b_miss_params = false;
 
-    string sCameraName = fSettings["Camera.type"]; //config 파일에서 camera type값 가져옵니다.
-    if(sCameraName == "PinHole") //sCameraName값이 PinHole일 경우
+    string sCameraName = fSettings["Camera.type"];
+    if(sCameraName == "PinHole")
     {
-        float fx, fy, cx, cy; // fx,fy는 초점거리 , cx, cy는 주점을 뜻합니다.
+        float fx, fy, cx, cy;
 
         // Camera calibration parameters
-        cv::FileNode node = fSettings["Camera.fx"]; //node에 camera.fx 값을 가져옵니다.
-        if(!node.empty() && node.isReal()) //node에 값이 비어있지 않고 부동소수점값이면 실행합니다.
+        cv::FileNode node = fSettings["Camera.fx"];
+        if(!node.empty() && node.isReal())
         {
-            fx = node.real(); //해당값을 가져옵니다. 
+            fx = node.real();
         }
         else
         {
             std::cerr << "*Camera.fx parameter doesn't exist or is not a real number*" << std::endl;
-            b_miss_params = true;  //b_miss_params값 true
+            b_miss_params = true;
         }
 
-        //이하 앞의 fx의 형식과 모두 동일합니다.
         node = fSettings["Camera.fy"];
         if(!node.empty() && node.isReal())
         {
@@ -592,12 +549,11 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
             b_miss_params = true;
         }
 
-        // Distortion parameters 
-        //k1,k2: radial distortion 계수, p1,p2: tangential distortion 계수
+        // Distortion parameters
         node = fSettings["Camera.k1"];
         if(!node.empty() && node.isReal())
         {
-            mDistCoef.at<float>(0) = node.real(); //초기에 설정해놓은 4x1 매트릭스에 대입합니다.
+            mDistCoef.at<float>(0) = node.real();
         }
         else
         {
@@ -638,7 +594,6 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
             b_miss_params = true;
         }
 
-        //해당값은 어떤건지 아직 모르겠습니다.코드상으로는 k3값이 주어져있다면 초기의 Distortion 매트릭스의 size를 늘리고 추가해줍니다. 
         node = fSettings["Camera.k3"];
         if(!node.empty() && node.isReal())
         {
@@ -646,19 +601,18 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
             mDistCoef.at<float>(4) = node.real();
         }
 
-        if(b_miss_params) //위의 k3값 제외하고 한개라도 값이 error가 있을경우 false합니다. 
+        if(b_miss_params)
         {
             return false;
         }
 
-        vector<float> vCamCalib{fx,fy,cx,cy}; //vertor를 생성해줍니다. 
+        vector<float> vCamCalib{fx,fy,cx,cy};
 
-        mpCamera = new Pinhole(vCamCalib); //CameraModel의 Pinhole class를 새로 생성합니다. 
+        mpCamera = new Pinhole(vCamCalib);
 
-        mpAtlas->AddCamera(mpCamera); //atlas 데이터저장소에 camera를 add합니다.
+        mpAtlas->AddCamera(mpCamera);
 
 
-        //위에서 가져왔던 camera parameter들을 print합니다.
         std::cout << "- Camera: Pinhole" << std::endl;
         std::cout << "- fx: " << fx << std::endl;
         std::cout << "- fy: " << fy << std::endl;
@@ -671,10 +625,9 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
         std::cout << "- p1: " << mDistCoef.at<float>(2) << std::endl;
         std::cout << "- p2: " << mDistCoef.at<float>(3) << std::endl;
 
-        if(mDistCoef.rows==5) //k3값이 있을경우 실행됩니다. 
+        if(mDistCoef.rows==5)
             std::cout << "- k3: " << mDistCoef.at<float>(4) << std::endl;
 
-        //homogeneouse matrix로 생성
         mK = cv::Mat::eye(3,3,CV_32F);
         mK.at<float>(0,0) = fx;
         mK.at<float>(1,1) = fy;
@@ -682,13 +635,12 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
         mK.at<float>(1,2) = cy;
 
     }
-    else if(sCameraName == "KannalaBrandt8") //fisheye camera 모델로 추정됩니다. 
+    else if(sCameraName == "KannalaBrandt8")
     {
         float fx, fy, cx, cy;
         float k1, k2, k3, k4;
 
         // Camera calibration parameters
-        // 앞서 진행했던 if문과 구조가 동일합니다. 
         cv::FileNode node = fSettings["Camera.fx"];
         if(!node.empty() && node.isReal())
         {
@@ -798,7 +750,7 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
             mK.at<float>(1,2) = cy;
         }
 
-        if(mSensor==System::STEREO || mSensor==System::IMU_STEREO){ //fisheye카메라일때 stereo와 imu stereo일때 실행합니다. 
+        if(mSensor==System::STEREO || mSensor==System::IMU_STEREO){
             // Right camera
             // Camera calibration parameters
             cv::FileNode node = fSettings["Camera2.fx"];
@@ -888,17 +840,14 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
                 b_miss_params = true;
             }
 
-            
-            // left camera lapping
 
-            int leftLappingBegin = -1; //lapping begin은 left camera의 lapping이 시작되는 왼쪽 column 입니다
-            int leftLappingEnd = -1; //laapping end는 left camera의 lapping이 끝나는 오른쪽 column입니다. 
+            int leftLappingBegin = -1;
+            int leftLappingEnd = -1;
 
-            // right camera lapping
-            int rightLappingBegin = -1; 
-            int rightLappingEnd = -1; 
+            int rightLappingBegin = -1;
+            int rightLappingEnd = -1;
 
-            node = fSettings["Camera.lappingBegin"]; //fisheye camera의 lapping area를 설정합니다. 
+            node = fSettings["Camera.lappingBegin"];
             if(!node.empty() && node.isInt())
             {
                 leftLappingBegin = node.operator int();
@@ -934,8 +883,7 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
             {
                 std::cout << "WARNING: Camera2.lappingEnd not correctly defined" << std::endl;
             }
-            
-            //Tlr은 transfomation matrix이고 이건 left camera 와 right camera사이의 transformation matrix입니다. 
+
             node = fSettings["Tlr"];
             if(!node.empty())
             {
@@ -952,7 +900,7 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
                 b_miss_params = true;
             }
 
-            if(!b_miss_params) //b_miss_params가 false이면 실행된다. 즉 모든 param이 정상일때 실행됩니다. 
+            if(!b_miss_params)
             {
                 static_cast<KannalaBrandt8*>(mpCamera)->mvLappingArea[0] = leftLappingBegin;
                 static_cast<KannalaBrandt8*>(mpCamera)->mvLappingArea[1] = leftLappingEnd;
@@ -992,17 +940,15 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
         mpAtlas->AddCamera(mpCamera);
         mpAtlas->AddCamera(mpCamera2);
     }
-
-
-    else //pinhole과 fisheye 둘다 아니라면 실행됩니다. 
+    else
     {
-        std::cerr << "*Not Supported Camera Sensor*" << std::endl; //error message
-        std::cerr << "Check an example configuration file with the desired sensor" << std::endl; //error message
+        std::cerr << "*Not Supported Camera Sensor*" << std::endl;
+        std::cerr << "Check an example configuration file with the desired sensor" << std::endl;
     }
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
     {
-        cv::FileNode node = fSettings["Camera.bf"]; //baseline과 FOV를 통해 bf값을 구할수 있습니다. 
+        cv::FileNode node = fSettings["Camera.bf"];
         if(!node.empty() && node.isReal())
         {
             mbf = node.real();
@@ -1015,18 +961,18 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
 
     }
 
-    float fps = fSettings["Camera.fps"]; //camera fps설정값을 가져옵니다 
+    float fps = fSettings["Camera.fps"];
     if(fps==0)
         fps=30;
 
     // Max/Min Frames to insert keyframes and to check relocalisation
-    mMinFrames = 0; //minframese는 0값 선언
-    mMaxFrames = fps; //maxframes는 해당 fps로 선언됩니다. 
+    mMinFrames = 0;
+    mMaxFrames = fps;
 
     cout << "- fps: " << fps << endl;
 
 
-    int nRGB = fSettings["Camera.RGB"]; //camera image가 rgb인지 bgr인지 입력합니다. 
+    int nRGB = fSettings["Camera.RGB"];
     mbRGB = nRGB;
 
     if(mbRGB)
@@ -1041,7 +987,7 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
         if(!node.empty()  && node.isReal())
         {
             mThDepth = node.real();
-            mThDepth = mbf*mThDepth/fx; //원거리 근거리 임계점을 설정합니다. 
+            mThDepth = mbf*mThDepth/fx;
             cout << endl << "Depth Threshold (Close/Far Points): " << mThDepth << endl;
         }
         else
@@ -1067,12 +1013,12 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
         else
         {
             std::cerr << "*DepthMapFactor parameter doesn't exist or is not a real number*" << std::endl;
-            b_miss_params = true; //error message
+            b_miss_params = true;
         }
 
     }
 
-    if(b_miss_params) //error message 발생시 false 반환
+    if(b_miss_params)
     {
         return false;
     }
@@ -1080,14 +1026,12 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings) //cam parameter들�
     return true;
 }
 
-bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings) //ORB parameter들을 parsing하는 함수입니다.
+bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
 {
-    bool b_miss_params = false; //초기error값 선언
-    int nFeatures, nLevels, fIniThFAST, fMinThFAST; //feature 갯수 , nlevel 기준, init fast feature 값, min fast feature 값
-    float fScaleFactor; //nlevel에 따른 scale 값
+    bool b_miss_params = false;
+    int nFeatures, nLevels, fIniThFAST, fMinThFAST;
+    float fScaleFactor;
 
-
-    //특별한건 없습니다. config파일에서 해당하는 param의 값들을 불러옵니다. 
     cv::FileNode node = fSettings["ORBextractor.nFeatures"];
     if(!node.empty() && node.isInt())
     {
@@ -1166,14 +1110,12 @@ bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings) //ORB parameter들�
     return true;
 }
 
-bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings) //IMU paramter들을 parsing하는 함수입니다. 
+bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
 {
     bool b_miss_params = false;
 
-    //이 함수 또한 마찬가지로 config파일에서 해당하는 param값들을 불러와 저장합니다. 
-
     cv::Mat Tbc;
-    cv::FileNode node = fSettings["Tbc"]; //transformation matrix입니다. body to imu입니다. 
+    cv::FileNode node = fSettings["Tbc"];
     if(!node.empty())
     {
         Tbc = node.mat();
@@ -1195,7 +1137,7 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings) //IMU paramter들�
 
     float freq, Ng, Na, Ngw, Naw;
 
-    node = fSettings["IMU.Frequency"]; //imu hz를 불러옵니다. 
+    node = fSettings["IMU.Frequency"];
     if(!node.empty() && node.isInt())
     {
         freq = node.operator int();
@@ -1206,7 +1148,7 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings) //IMU paramter들�
         b_miss_params = true;
     }
 
-    node = fSettings["IMU.NoiseGyro"]; //imu gyro의 noise값입니다 .
+    node = fSettings["IMU.NoiseGyro"];
     if(!node.empty() && node.isReal())
     {
         Ng = node.real();
@@ -1273,51 +1215,50 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings) //IMU paramter들�
 
 void Tracking::SetLocalMapper(LocalMapping *pLocalMapper)
 {
-    mpLocalMapper=pLocalMapper; // Localmapping.cc 포인터 클래스 선언
+    mpLocalMapper=pLocalMapper;
 }
 
 void Tracking::SetLoopClosing(LoopClosing *pLoopClosing)
 {
-    mpLoopClosing=pLoopClosing;    // Loopclosing.cc 포인터 클래스 선언
+    mpLoopClosing=pLoopClosing;
 }
 
 void Tracking::SetViewer(Viewer *pViewer)
 {
-    mpViewer=pViewer;   // Viewer.cc 포인터 클래스 선언 
+    mpViewer=pViewer;
 }
 
 void Tracking::SetStepByStep(bool bSet)
 {
-    bStepByStep = bSet;   // bool 타입 변수 선언
+    bStepByStep = bSet;
 }
 
 
 
-cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp, string filename) 
-//imRectleft 왼쪽 이미지, imrectright 오른쪽 이미지, timestamp, filename 선언 --> stereo image data를 불러옴
+cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp, string filename)
 {
-    mImGray = imRectLeft;   //left image를 가져옵니다. 
-    cv::Mat imGrayRight = imRectRight; //right image를 가져옵니다. 
-    mImRight = imRectRight; //right image를 가져옵니다. 
+    mImGray = imRectLeft;
+    cv::Mat imGrayRight = imRectRight;
+    mImRight = imRectRight;
 
-    if(mImGray.channels()==3) //image가 channel이 3개면, 즉 color image data면 실행됩니다. 
-    {
-        if(mbRGB) //rgb 데이터라면 
-        {
-            cvtColor(mImGray,mImGray,cv::COLOR_RGB2GRAY);   //image를 gray scale로 변환합니다. 
-            cvtColor(imGrayRight,imGrayRight,cv::COLOR_RGB2GRAY); //마찬가지로 gray scale로 변환합니다. 
-        }
-        else //rgb가 아닌 bgr일때
-        {
-            cvtColor(mImGray,mImGray,cv::COLOR_BGR2GRAY); //image를 gray scale로 변환합니다. 
-            cvtColor(imGrayRight,imGrayRight,cv::COLOR_BGR2GRAY); //image를 gray scale로 변환합니다. 
-        }
-    }
-    else if(mImGray.channels()==4)  //image가 rgba일때 --> alpha값이 추가된 데이터 --> 각 픽셀의 투명도를 뜻함. 딱히...
+    if(mImGray.channels()==3)
     {
         if(mbRGB)
         {
-            cvtColor(mImGray,mImGray,cv::COLOR_RGBA2GRAY); //마찬가지로 모두 gray scale로 변환
+            cvtColor(mImGray,mImGray,cv::COLOR_RGB2GRAY);
+            cvtColor(imGrayRight,imGrayRight,cv::COLOR_RGB2GRAY);
+        }
+        else
+        {
+            cvtColor(mImGray,mImGray,cv::COLOR_BGR2GRAY);
+            cvtColor(imGrayRight,imGrayRight,cv::COLOR_BGR2GRAY);
+        }
+    }
+    else if(mImGray.channels()==4)
+    {
+        if(mbRGB)
+        {
+            cvtColor(mImGray,mImGray,cv::COLOR_RGBA2GRAY);
             cvtColor(imGrayRight,imGrayRight,cv::COLOR_RGBA2GRAY);
         }
         else
@@ -1327,13 +1268,13 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
         }
     }
 
-    if (mSensor == System::STEREO && !mpCamera2) //stereo이고 fisheye가 아닐때를 의미합니다. 
+    if (mSensor == System::STEREO && !mpCamera2)
         mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera);
-    else if(mSensor == System::STEREO && mpCamera2) //stereo이고 fisheye일때를 의미합니다. --> 차이점은 mpCamera2가 들어갑니다. 즉 lapping 포인트를 고려하느냐 안하느냐의 차이점입니다. 
+    else if(mSensor == System::STEREO && mpCamera2)
         mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,mpCamera2,mTlr);
-    else if(mSensor == System::IMU_STEREO && !mpCamera2) //imu stereo이고 pinhole 일때를 의미합니다. 
-        mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib); //추가적인 parameter는 lastframe과 imuclib가 있습니다. 해당기능은 위에서 설명했습니다. 
-    else if(mSensor == System::IMU_STEREO && mpCamera2) //imu stereo이고 fisheye일때를 의미합니다. 
+    else if(mSensor == System::IMU_STEREO && !mpCamera2)
+        mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib);
+    else if(mSensor == System::IMU_STEREO && mpCamera2)
         mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,mpCamera2,mTlr,&mLastFrame,*mpImuCalib);
 
     mCurrentFrame.mNameFile = filename;
@@ -1350,9 +1291,8 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
 }
 
 
-cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, string filename) //해당 study에서는 stereo만 진행하고 있으므로 이외의 type은 제외합니다. 
+cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, string filename)
 {
-    
     mImGray = imRGB;
     cv::Mat imDepth = imD;
 
@@ -1389,7 +1329,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
 }
 
 
-cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)//해당 study에서는 stereo만 진행하고 있으므로 이외의 type은 제외합니다. 
+cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)
 {
     mImGray = im;
 
@@ -1444,8 +1384,8 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp,
 
 void Tracking::GrabImuData(const IMU::Point &imuMeasurement)
 {
-    unique_lock<mutex> lock(mMutexImuQueue); //mutex로 선언된 mMutexImuQueue를 lock하고
-    mlQueueImuData.push_back(imuMeasurement); //mlQueueImuData에 새로운 imuMeasurement를 입력합니다. 
+    unique_lock<mutex> lock(mMutexImuQueue);
+    mlQueueImuData.push_back(imuMeasurement);
 }
 
 void Tracking::PreintegrateIMU()
@@ -1454,85 +1394,87 @@ void Tracking::PreintegrateIMU()
 
     if(!mCurrentFrame.mpPrevFrame)
     {
-        Verbose::PrintMess("non prev frame ", Verbose::VERBOSITY_NORMAL); //prevframe이 존재하지 않을때 즉. 맨처음 시작임을 뜻합니다. 
-        mCurrentFrame.setIntegrated(); //새로운 mutex imu를 선언하게되고 imu preinterate를 true값으로 반환합니다.
+        Verbose::PrintMess("non prev frame ", Verbose::VERBOSITY_NORMAL);
+        mCurrentFrame.setIntegrated();
         return;
     }
 
-    mvImuFromLastFrame.clear(); //preframe이 존재하고 lastframe에 있던 imu data를 clear합니다. 
-    mvImuFromLastFrame.reserve(mlQueueImuData.size()); //memory size를 기존 queue size만큼 늘려줍니다. 
-    if(mlQueueImuData.size() == 0) //만약 queue size가 0일때 실행합니다. 
+    mvImuFromLastFrame.clear();
+    mvImuFromLastFrame.reserve(mlQueueImuData.size());
+    if(mlQueueImuData.size() == 0)
     {
-        Verbose::PrintMess("Not IMU data in mlQueueImuData!!", Verbose::VERBOSITY_NORMAL); //queue size가 0이라는 의미는 imu데이터가 존재하지 않는다는 의미입니다. 
-        mCurrentFrame.setIntegrated(); //imu pre integrated 값을 true로 반환하게 됩니다. 즉 setIntegrated 함수가 실행되면 imu값을 받지 않게됩니다. 
+        Verbose::PrintMess("Not IMU data in mlQueueImuData!!", Verbose::VERBOSITY_NORMAL);
+        mCurrentFrame.setIntegrated();
         return;
     }
 
-    while(true) //while문 start
+    while(true)
     {
-        bool bSleep = false; //초기값 선언
+        bool bSleep = false;
         {
-            unique_lock<mutex> lock(mMutexImuQueue); //imu queue를 생성합니다.
-            if(!mlQueueImuData.empty()) //imu 데이터가 존재하는 경우
+            unique_lock<mutex> lock(mMutexImuQueue);
+            if(!mlQueueImuData.empty())
             {
-                IMU::Point* m = &mlQueueImuData.front(); //queue의 가장 오래된 imu데이터 주소값을 가져옵니다. 
-                cout.precision(17); //소수점자리수를 17개로 설정
-                if(m->t < mCurrentFrame.mpPrevFrame->mTimeStamp-0.001l) // 가장 오래된 imu데이터에서 t값(time_stamp)을 가져온뒤 바로 이전 frame의 time stamp -0.001과 비교합니다. 만약 더 크다면 prev frame보다 최신의 imu 데이터라고 볼수 있습니다. 
+                IMU::Point* m = &mlQueueImuData.front();
+                cout.precision(17);
+                if(m->t<mCurrentFrame.mpPrevFrame->mTimeStamp-0.001l)
                 {
-                    mlQueueImuData.pop_front(); //front의 imu를 삭제합니다. 
+                    mlQueueImuData.pop_front();
                 }
-                else if(m->t < mCurrentFrame.mTimeStamp-0.001l)  //prev frame보다는 최신데이터이게되면 current frame과 비교합니다. imu데이터들을 저장한뒤 버리고를 반복합니다. 
+                else if(m->t<mCurrentFrame.mTimeStamp-0.001l)
                 {
-                    mvImuFromLastFrame.push_back(*m); 
+                    mvImuFromLastFrame.push_back(*m);
                     mlQueueImuData.pop_front();
                 }
                 else
                 {
-                    mvImuFromLastFrame.push_back(*m); //가장 최신의 imu들은 저장합니다. 
+                    mvImuFromLastFrame.push_back(*m);
                     break;
                 }
             }
-            else //imu데이터가 존재하지 않는다면 
+            else
             {
                 break;
                 bSleep = true;
             }
         }
         if(bSleep)
-            usleep(500); //500milli sec
+            usleep(500);
     }
 
 
-        const int n = mvImuFromLastFrame.size()-1; //n을 from last frame size의 -1로 선언합니다. 이유는 vector로 선언했기때문입니다. 
-    IMU::Preintegrated* pImuPreintegratedFromLastFrame = new IMU::Preintegrated(mLastFrame.mImuBias,mCurrentFrame.mImuCalib); //Preintegration of Imu Measurements 선언
+    const int n = mvImuFromLastFrame.size()-1;
+    IMU::Preintegrated* pImuPreintegratedFromLastFrame = new IMU::Preintegrated(mLastFrame.mImuBias,mCurrentFrame.mImuCalib);
 
-    for(int i=0; i<n; i++) //lastframe에 있는 imu 데이터를 모두 수행합니다. 
+    for(int i=0; i<n; i++)
     {
-        float tstep; //tstep float형태로 선언합니다.
-        cv::Point3f acc, angVel;  //point 형태로 acc, angVel 선언합니다. 
-        if((i==0) && (i<(n-1)))  //i가 0이고 n-1보다 작을때, 즉 lastframe에 포함된 imu가 갯수가 1이상일때의 초기값을 의미합니다. 
+        float tstep;
+        cv::Point3f acc, angVel;
+        if((i==0) && (i<(n-1)))
         {
-            float tab = mvImuFromLastFrame[i+1].t - mvImuFromLastFrame[i].t; // 각각 i번째 imu 데이터의 timestamp값을 빼줍니다. 즉 imu 데이터의 시간 간격을 tab에 저장합니다. 
-            float tini = mvImuFromLastFrame[i].t - mCurrentFrame.mpPrevFrame->mTimeStamp; //바로 직전 imu데이터의 stamp와 lastframe의 i번째 imu데이터와 시간 간격을 tini에 저장합니다. 
-            acc = (mvImuFromLastFrame[i].a + mvImuFromLastFrame[i+1].a -  (mvImuFromLastFrame[i+1].a - mvImuFromLastFrame[i].a)*(tini/tab))*0.5f; //이부분 같은 경우는 맨 처음부분인데 해당부분은 frame과 정확한 매칭이 어려워서 
-            angVel = (mvImuFromLastFrame[i].w + mvImuFromLastFrame[i+1].w - (mvImuFromLastFrame[i+1].w - mvImuFromLastFrame[i].w)*(tini/tab))*0.5f; //medium 적분에 보정값을 넣어줍니다. --> (mvImuFromLastFrame[i+1].w - mvImuFromLastFrame[i].w)*(tini/tab)
-            tstep = mvImuFromLastFrame[i+1].t - mCurrentFrame.mpPrevFrame -> mTimeStamp; //tstep은 tini 다음 step을 의미합니다. --> 음수값일텐데....?
-        }    
+            float tab = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
+            float tini = mvImuFromLastFrame[i].t-mCurrentFrame.mpPrevFrame->mTimeStamp;
+            acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a-
+                    (mvImuFromLastFrame[i+1].a-mvImuFromLastFrame[i].a)*(tini/tab))*0.5f;
+            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w-
+                    (mvImuFromLastFrame[i+1].w-mvImuFromLastFrame[i].w)*(tini/tab))*0.5f;
+            tstep = mvImuFromLastFrame[i+1].t-mCurrentFrame.mpPrevFrame->mTimeStamp;
+        }
         else if(i<(n-1))
         {
-            acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a)*0.5f; //일반 medium 적분입니다. 
-            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w)*0.5f; //동일합니다. 
-            tstep = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t; //다음 step의 time을 의미합니다. 
+            acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a)*0.5f;
+            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w)*0.5f;
+            tstep = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
         }
         else if((i>0) && (i==(n-1)))
         {
-            float tab = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t; //time offset 값입니다. 
-            float tend = mvImuFromLastFrame[i+1].t-mCurrentFrame.mTimeStamp; // 마지막의 imu데이터와 가장 최신의 frame의 시간을 뺀 값입니다. 
+            float tab = mvImuFromLastFrame[i+1].t-mvImuFromLastFrame[i].t;
+            float tend = mvImuFromLastFrame[i+1].t-mCurrentFrame.mTimeStamp;
             acc = (mvImuFromLastFrame[i].a+mvImuFromLastFrame[i+1].a-
-                    (mvImuFromLastFrame[i+1].a-mvImuFromLastFrame[i].a)*(tend/tab))*0.5f; // 맨 처음부분과 동일하게 마지막부분도 frame과의 timestamp가 동일하게 맞기 힘듭니다. 따라서 
-            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w- // 보정값을 넣어줍니다. 
+                    (mvImuFromLastFrame[i+1].a-mvImuFromLastFrame[i].a)*(tend/tab))*0.5f;
+            angVel = (mvImuFromLastFrame[i].w+mvImuFromLastFrame[i+1].w-
                     (mvImuFromLastFrame[i+1].w-mvImuFromLastFrame[i].w)*(tend/tab))*0.5f;
-            tstep = mCurrentFrame.mTimeStamp-mvImuFromLastFrame[i].t; 
+            tstep = mCurrentFrame.mTimeStamp-mvImuFromLastFrame[i].t;
         }
         else if((i==0) && (i==(n-1)))
         {
@@ -1543,60 +1485,57 @@ void Tracking::PreintegrateIMU()
 
         if (!mpImuPreintegratedFromLastKF)
             cout << "mpImuPreintegratedFromLastKF does not exist" << endl;
-        mpImuPreintegratedFromLastKF-> (acc,angVel,tstep); //해당 acc, angVel, tstep을 mpImuPreintegratedFromLastKF에 저장합니다. 
-        pImuPreintegratedFromLastFrame->IntegrateNewMeasurement(acc,angVel,tstep); //직전의 position을 저장한 뒤, Update delta rotation,
-        //Compute rotation parts of matrices A and B, Update rotation jacobian wrt bias correction, Total integrated time 작업을 합니다. 
+        mpImuPreintegratedFromLastKF->IntegrateNewMeasurement(acc,angVel,tstep);
+        pImuPreintegratedFromLastFrame->IntegrateNewMeasurement(acc,angVel,tstep);
     }
 
-    mCurrentFrame.mpImuPreintegratedFrame = pImuPreintegratedFromLastFrame; // CurrentFrame class의 imupreintegratedFrame pointer에다가 pImuPreintegratedFromLastFrame을 저장합니다.
-    mCurrentFrame.mpImuPreintegrated = mpImuPreintegratedFromLastKF; // CurrentFrame class의 mpImuPreintegrated pointer에다가 mpImuPreintegratedFromLastKF을 저장합니다.
-    mCurrentFrame.mpLastKeyFrame = mpLastKeyFrame; //마찬가지입니다!
+    mCurrentFrame.mpImuPreintegratedFrame = pImuPreintegratedFromLastFrame;
+    mCurrentFrame.mpImuPreintegrated = mpImuPreintegratedFromLastKF;
+    mCurrentFrame.mpLastKeyFrame = mpLastKeyFrame;
 
-    mCurrentFrame.setIntegrated();  //imu 데이터 정리가 끝났으므로 lock 작업을 하게됩니다. imu를 더이상 받지 않는다라는 뜻으로 이해해도 괜찮습니다. 
+    mCurrentFrame.setIntegrated();
 
-    Verbose::PrintMess("Preintegration is finished!! ", Verbose::VERBOSITY_DEBUG); //preintegration finish
+    Verbose::PrintMess("Preintegration is finished!! ", Verbose::VERBOSITY_DEBUG);
 }
 
 
 bool Tracking::PredictStateIMU()
 {
-    if(!mCurrentFrame.mpPrevFrame)  //CurrentFrame에서 previous Frame이 존재하지 않을때입니다. 
+    if(!mCurrentFrame.mpPrevFrame)
     {
         Verbose::PrintMess("No last frame", Verbose::VERBOSITY_NORMAL);
         return false;
     }
 
-    if(mbMapUpdated && mpLastKeyFrame) //map update가 진행됬고, lastkeyframe이 존재할때 실행됩니다. 
+    if(mbMapUpdated && mpLastKeyFrame)
     {
-        const cv::Mat twb1 = mpLastKeyFrame->GetImuPosition(); //transformation 부분 imu데이터를 가져옵니다. 
-        const cv::Mat Rwb1 = mpLastKeyFrame->GetImuRotation(); //rotation 부분 imu데이터를 가져옵니다. 
-        const cv::Mat Vwb1 = mpLastKeyFrame->GetVelocity(); //velocity 값을 가져옵니다. 
+        const cv::Mat twb1 = mpLastKeyFrame->GetImuPosition();
+        const cv::Mat Rwb1 = mpLastKeyFrame->GetImuRotation();
+        const cv::Mat Vwb1 = mpLastKeyFrame->GetVelocity();
 
-        const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE); //IMU data의 gravity 값을 3,1 matrix로 가져옵니다. 
-        const float t12 = mpImuPreintegratedFromLastKF->dT; //1번과 2번의 time 차이값입니다. 
+        const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE);
+        const float t12 = mpImuPreintegratedFromLastKF->dT;
 
-        //위의 변수들을 통해서 실제 연산에 이용될 값들을 아래 변수들로 정의합니다. 
-
-        cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mpImuPreintegratedFromLastKF->GetDeltaRotation(mpLastKeyFrame->GetImuBias())); //bias값을 고려하여 delta rotation값을 가져오고 해당 값을 SVD(특이값분해) 작업을 진행합니다. 
-        cv::Mat twb2 = twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mpImuPreintegratedFromLastKF->GetDeltaPosition(mpLastKeyFrame->GetImuBias()); //운동방정식 및 노이즈를 계산하여 최종 twb를 구합니다. 
-        cv::Mat Vwb2 = Vwb1 + t12*Gz + Rwb1*mpImuPreintegratedFromLastKF->GetDeltaVelocity(mpLastKeyFrame->GetImuBias()); //velocity 부분도 동일합니다. 
-        mCurrentFrame.SetImuPoseVelocity(Rwb2,twb2,Vwb2); //pose와 velocity를 predict할수 있는 변수들을 입력합니다. 
-        mCurrentFrame.mPredRwb = Rwb2.clone(); //rwb2 matrix 저장
-        mCurrentFrame.mPredtwb = twb2.clone(); //twb2 matrix 저장 
-        mCurrentFrame.mPredVwb = Vwb2.clone(); //Vwb2 matrix 저장
-        mCurrentFrame.mImuBias = mpLastKeyFrame->GetImuBias(); //bias 값 저장
-        mCurrentFrame.mPredBias = mCurrentFrame.mImuBias; //current bias 값 저장
+        cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mpImuPreintegratedFromLastKF->GetDeltaRotation(mpLastKeyFrame->GetImuBias()));
+        cv::Mat twb2 = twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mpImuPreintegratedFromLastKF->GetDeltaPosition(mpLastKeyFrame->GetImuBias());
+        cv::Mat Vwb2 = Vwb1 + t12*Gz + Rwb1*mpImuPreintegratedFromLastKF->GetDeltaVelocity(mpLastKeyFrame->GetImuBias());
+        mCurrentFrame.SetImuPoseVelocity(Rwb2,twb2,Vwb2);
+        mCurrentFrame.mPredRwb = Rwb2.clone();
+        mCurrentFrame.mPredtwb = twb2.clone();
+        mCurrentFrame.mPredVwb = Vwb2.clone();
+        mCurrentFrame.mImuBias = mpLastKeyFrame->GetImuBias();
+        mCurrentFrame.mPredBias = mCurrentFrame.mImuBias;
         return true;
     }
-    else if(!mbMapUpdated) //만약에 map update가 진행되지 않았을때 실행됩니다.
+    else if(!mbMapUpdated)
     {
-        const cv::Mat twb1 = mLastFrame.GetImuPosition(); //Keyframe이 아닌 일반 frame에서 data를 가져옵니다. 
-        const cv::Mat Rwb1 = mLastFrame.GetImuRotation(); // 마찬가지입니다. 
+        const cv::Mat twb1 = mLastFrame.GetImuPosition();
+        const cv::Mat Rwb1 = mLastFrame.GetImuRotation();
         const cv::Mat Vwb1 = mLastFrame.mVw;
         const cv::Mat Gz = (cv::Mat_<float>(3,1) << 0,0,-IMU::GRAVITY_VALUE);
         const float t12 = mCurrentFrame.mpImuPreintegratedFrame->dT;
 
-        cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaRotation(mLastFrame.mImuBias)); //위에서 keyframe데이터로 했던 것과 동일합니다. 
+        cv::Mat Rwb2 = IMU::NormalizeRotation(Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaRotation(mLastFrame.mImuBias));
         cv::Mat twb2 = twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaPosition(mLastFrame.mImuBias);
         cv::Mat Vwb2 = Vwb1 + t12*Gz + Rwb1*mCurrentFrame.mpImuPreintegratedFrame->GetDeltaVelocity(mLastFrame.mImuBias);
 
@@ -1617,32 +1556,32 @@ bool Tracking::PredictStateIMU()
 
 void Tracking::ComputeGyroBias(const vector<Frame*> &vpFs, float &bwx,  float &bwy, float &bwz)
 {
-    const int N = vpFs.size(); //vpFs는 index값으로 추측됩니다. 즉 데이터 갯수를 뜻합니다. 
-    vector<float> vbx; //gyro의 bias x 값입니다. 
-    vbx.reserve(N); //memory 증가합니다. 
-    vector<float> vby; //gyro의 bias y 값입니다.
-    vby.reserve(N); //memory값을 증가합니다. 
-    vector<float> vbz; //동일
-    vbz.reserve(N); //동일
+    const int N = vpFs.size();
+    vector<float> vbx;
+    vbx.reserve(N);
+    vector<float> vby;
+    vby.reserve(N);
+    vector<float> vbz;
+    vbz.reserve(N);
 
-    cv::Mat H = cv::Mat::zeros(3,3,CV_32F); //32-bit floating-point number , 3x3 matrix 생성합니다. 
-    cv::Mat grad  = cv::Mat::zeros(3,1,CV_32F); //32-bit floating-point number , 3x1 matrix 생성합니다. 
-    for(int i=1;i<N;i++)  //bias의 최종 갯수만큼 연산을 시작합니다.
+    cv::Mat H = cv::Mat::zeros(3,3,CV_32F);
+    cv::Mat grad  = cv::Mat::zeros(3,1,CV_32F);
+    for(int i=1;i<N;i++)
     {
-        Frame* pF2 = vpFs[i]; //대상하는 bias의 앞 bias입니다.
-        Frame* pF1 = vpFs[i-1]; //현재 대상이 되는 bias값입니다. 
-        cv::Mat VisionR = pF1->GetImuRotation().t() * pF2->GetImuRotation(); //각 두개의 frame의 imu값을 곱합니다. (최종 rotation값, GT값으로 볼수있습니다.)
-        cv::Mat JRg = pF2->mpImuPreintegratedFrame->JRg; //bias compute되기 전 original bias값입니다. 
-        cv::Mat E = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaRotation().t() * VisionR; //delta rotation값과 vision R값을 곱해서 변화된 vision R값을 구합니다. 
-        cv::Mat e = IMU::LogSO3(E); //logSO3로 다시 변환합니다. 
-        assert(fabs(pF2->mTimeStamp - pF1->mTimeStamp - pF2->mpImuPreintegratedFrame->dT) < 0.01); //이건 오류메세지를 뽑기위한 라인입니다. 디버깅 작업이라고 할수 있습니다. 
+        Frame* pF2 = vpFs[i];
+        Frame* pF1 = vpFs[i-1];
+        cv::Mat VisionR = pF1->GetImuRotation().t()*pF2->GetImuRotation();
+        cv::Mat JRg = pF2->mpImuPreintegratedFrame->JRg;
+        cv::Mat E = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaRotation().t()*VisionR;
+        cv::Mat e = IMU::LogSO3(E);
+        assert(fabs(pF2->mTimeStamp-pF1->mTimeStamp-pF2->mpImuPreintegratedFrame->dT)<0.01);
 
-        cv::Mat J = -IMU::InverseRightJacobianSO3(e) * E.t() * JRg; //마지막으로 e matrix와 transpose값과 JRg값을 연산해서 최종 bias matrix 값을 구합니다. 
-        grad += J.t() * e; //기존e에 J.t를 연산하여 zero matrix에 축척합니다.
-        H += J.t() * J; //기존 J에도 J.t를 연산하여 zero matrix에 축척합니다. 
+        cv::Mat J = -IMU::InverseRightJacobianSO3(e)*E.t()*JRg;
+        grad += J.t()*e;
+        H += J.t()*J;
     }
 
-    cv::Mat bg = -H.inv(cv::DECOMP_SVD)*grad; //H의 pseudo-inverse matrix와 grap matrix를 연산하여 bg에 저장합니다. 
+    cv::Mat bg = -H.inv(cv::DECOMP_SVD)*grad;
     bwx = bg.at<float>(0);
     bwy = bg.at<float>(1);
     bwz = bg.at<float>(2);
@@ -1666,7 +1605,7 @@ void Tracking::ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax, 
 
     cv::Mat J(nEqs,nVar,CV_32F,cv::Scalar(0));
     cv::Mat e(nEqs,1,CV_32F,cv::Scalar(0));
-    cv::Mat g = (cv::Mat_<float>(3,1) << 0,0, -IMU::GRAVITY_VALUE);
+    cv::Mat g = (cv::Mat_<float>(3,1)<<0,0,-IMU::GRAVITY_VALUE);
 
     for(int i=0;i<N-1;i++)
     {
@@ -1675,7 +1614,7 @@ void Tracking::ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax, 
         cv::Mat twb1 = pF1->GetImuPosition();
         cv::Mat twb2 = pF2->GetImuPosition();
         cv::Mat Rwb1 = pF1->GetImuRotation();
-        cv::Mat dP12 = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaPosition(); 
+        cv::Mat dP12 = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaPosition();
         cv::Mat dV12 = pF2->mpImuPreintegratedFrame->GetUpdatedDeltaVelocity();
         cv::Mat JP12 = pF2->mpImuPreintegratedFrame->JPa;
         cv::Mat JV12 = pF2->mpImuPreintegratedFrame->JVa;
@@ -1696,20 +1635,20 @@ void Tracking::ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax, 
     cv::Mat x(nVar,1,CV_32F);
     cv::solve(H,B,x);
 
-    bax = x.at<float>(3*N);    //N번째 bias를 가져옵니다. 
+    bax = x.at<float>(3*N);
     bay = x.at<float>(3*N+1);
     baz = x.at<float>(3*N+2);
 
     for(int i=0;i<N;i++)
     {
-        Frame* pF = vpFs[i]; //각 index의 frame data
-        x.rowRange(3*i,3*i+3).copyTo(pF->mVw); //방정식의 해 x --> position 값과 velocity값이 들어가있습니다. 각 3~6 *i번째의 linear velocity값을 가져옵니다. 
-        if(i>0) //i가 초기값이 아니라면 실행됩니다. 
+        Frame* pF = vpFs[i];
+        x.rowRange(3*i,3*i+3).copyTo(pF->mVw);
+        if(i>0)
         {
-            pF->mImuBias.bax = bax; //bias업데이트 합니다.
-            pF->mImuBias.bay = bay; 
-            pF->mImuBias.baz = baz; 
-            pF->mpImuPreintegratedFrame->SetNewBias(pF->mImuBias); //업데이트한 bias값을 갱신합니다. 
+            pF->mImuBias.bax = bax;
+            pF->mImuBias.bay = bay;
+            pF->mImuBias.baz = baz;
+            pF->mpImuPreintegratedFrame->SetNewBias(pF->mImuBias);
         }
     }
 }
@@ -1717,26 +1656,28 @@ void Tracking::ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax, 
 
 void Tracking::Track()
 {
-
-    if (bStepByStep)
+    // 코드 추가 예정?
+    if (bStepByStep)        // bStepByStep 기본값이 false, 값 변동 없음
     {
-        while(!mbStep)
+        while(!mbStep)      // mbStep 기본값 false, 값 변동 없음
             usleep(500);
         mbStep = false;
     }
 
-    if(mpLocalMapper->mbBadImu)
+    // imu값이 안좋으면 track 종료
+    if(mpLocalMapper->mbBadImu)     // mbBadImu 기본값이 false, not enough motion for initializing일때 true
     {
         cout << "TRACK: Reset map because local mapper set the bad imu flag " << endl;
-        mpSystem->ResetActiveMap();
+        mpSystem->ResetActiveMap();     // 모든 변수 초기화(clear)
         return;
     }
 
     Map* pCurrentMap = mpAtlas->GetCurrentMap();
 
-    if(mState!=NO_IMAGES_YET)
+    if(mState!=NO_IMAGES_YET)       // mState : tracking state(enum), NO_IMAGES_YET : 0
     {
-        if(mLastFrame.mTimeStamp>mCurrentFrame.mTimeStamp)
+        // frame timestamp가 비정상이라면
+        if(mLastFrame.mTimeStamp>mCurrentFrame.mTimeStamp)      // mTimeStamp : frame timestamp
         {
             cerr << "ERROR: Frame with a timestamp older than previous frame detected!" << endl;
             unique_lock<mutex> lock(mMutexImuQueue);
@@ -1744,18 +1685,20 @@ void Tracking::Track()
             CreateMapInAtlas();
             return;
         }
-        else if(mCurrentFrame.mTimeStamp>mLastFrame.mTimeStamp+1.0)
+        
+        // frame간 timestamp가 1.0 이상 차이날때
+        else if(mCurrentFrame.mTimeStamp>mLastFrame.mTimeStamp+1.0)     //////unix timestamp//////
         {
             cout << "id last: " << mLastFrame.mnId << "    id curr: " << mCurrentFrame.mnId << endl;
-            if(mpAtlas->isInertial())
+            if(mpAtlas->isInertial())       // inertial 일때
             {
-
+                
                 if(mpAtlas->isImuInitialized())
                 {
                     cout << "Timestamp jump detected. State set to LOST. Reseting IMU integration..." << endl;
-                    if(!pCurrentMap->GetIniertialBA2())
+                    if(!pCurrentMap->GetIniertialBA2())     // mbIMU_BA2 값을 return하는데 false로 초기화되고 변하지 않음, ////정확한 의미를 모르겠습니다////
                     {
-                        mpSystem->ResetActiveMap();
+                        mpSystem->ResetActiveMap();     // mbResetActiveMap이라는 flag에 true 저장
                     }
                     else
                     {
@@ -1777,14 +1720,14 @@ void Tracking::Track()
     if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO) && mpLastKeyFrame)
         mCurrentFrame.SetNewBias(mpLastKeyFrame->GetImuBias());
 
-    if(mState==NO_IMAGES_YET)
+    if(mState==NO_IMAGES_YET)       // NO_IMAGES_YET : 0
     {
-        mState = NOT_INITIALIZED;
+        mState = NOT_INITIALIZED;       // NOT_INITIALIZED : 1
     }
 
     mLastProcessedState=mState;
 
-    if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO) && !mbCreatedMap)
+    if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO) && !mbCreatedMap)       // mbCreatedMap : Atlas에 map이 생성되면 true, 기본값 false
     {
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartPreIMU = std::chrono::steady_clock::now();
@@ -1798,25 +1741,29 @@ void Tracking::Track()
 #endif
 
     }
-    mbCreatedMap = false;
+    mbCreatedMap = false;       // Atlas에 map이 생성되면 true
 
     // Get Map Mutex -> Map cannot be changed
     unique_lock<mutex> lock(pCurrentMap->mMutexMapUpdate);
 
-    mbMapUpdated = false;
+    mbMapUpdated = false;       // map이 update 되었는지
 
-    int nCurMapChangeIndex = pCurrentMap->GetMapChangeIndex();
+    int nCurMapChangeIndex = pCurrentMap->GetMapChangeIndex();      // GetMapChangeIndex : 한개의 map에서 보정이 일어난 횟수, ex) scale rotation
     int nMapChangeIndex = pCurrentMap->GetLastMapChange();
-    if(nCurMapChangeIndex>nMapChangeIndex)
+    if(nCurMapChangeIndex>nMapChangeIndex)      // map change가 일어난 경우
     {
         // cout << "Map update detected" << endl;
-        pCurrentMap->SetLastMapChange(nCurMapChangeIndex);
+        pCurrentMap->SetLastMapChange(nCurMapChangeIndex);      // mnMapChangeNotified에 nCurMapChangeIndex 입력
         mbMapUpdated = true;
     }
 
 
-    if(mState==NOT_INITIALIZED)
+
+
+    // 초기화가 되지 않은 경우
+    if(mState==NOT_INITIALIZED)     // NOT_INITIALIZED : 1
     {
+        // 초기화 시켜줌
         if(mSensor==System::STEREO || mSensor==System::RGBD || mSensor==System::IMU_STEREO)
             StereoInitialization();
         else
@@ -1824,19 +1771,34 @@ void Tracking::Track()
             MonocularInitialization();
         }
 
-        mpFrameDrawer->Update(this);
+        // 업데이트
+        mpFrameDrawer->Update(this);        //////this의 정확히 의미///////
 
-        if(mState!=OK) // If rightly initialized, mState=OK
+        // OK가 아니면 last frame에 current를 덮어씌우고 종료
+        if(mState!=OK) // If rightly initialized, mState=OK, OK : 2
         {
             mLastFrame = Frame(mCurrentFrame);
             return;
         }
 
+
+
+
+        // map의 개수가 1개면 현재 frame의 id 입력
         if(mpAtlas->GetAllMaps().size() == 1)
         {
             mnFirstFrameId = mCurrentFrame.mnId;
         }
     }
+
+
+
+
+
+
+
+
+    // 초기화 된 경우
     else
     {
         // System is initialized. Track Frame.
@@ -1845,9 +1807,12 @@ void Tracking::Track()
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartPosePred = std::chrono::steady_clock::now();
 #endif
-
         // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
-        if(!mbOnlyTracking)
+        // local mapping이 활성화 될때
+        // mbOnlyTracking : True if local mapping is deactivated and we are performing only localization
+
+        // mapping mode vs localization mode
+        if(!mbOnlyTracking)     // mapping mode
         {
 
             // State OK
@@ -1857,30 +1822,30 @@ void Tracking::Track()
             {
 
                 // Local Mapping might have changed some MapPoints tracked in last frame
-                CheckReplacedInLastFrame();
+                CheckReplacedInLastFrame();     // map point에 대해서 공유자원을 막음
 
                 if((mVelocity.empty() && !pCurrentMap->isImuInitialized()) || mCurrentFrame.mnId<mnLastRelocFrameId+2)
                 {
                     //Verbose::PrintMess("TRACK: Track with respect to the reference KF ", Verbose::VERBOSITY_DEBUG);
-                    bOK = TrackReferenceKeyFrame();
+                    bOK = TrackReferenceKeyFrame();     // (bool) track reference keyframe
                 }
                 else
                 {
                     //Verbose::PrintMess("TRACK: Track with motion model", Verbose::VERBOSITY_DEBUG);
-                    bOK = TrackWithMotionModel();
+                    bOK = TrackWithMotionModel();       // last-current projection feature match가 일정 개수 이상으로 잘되고 있는지
                     if(!bOK)
                         bOK = TrackReferenceKeyFrame();
                 }
 
 
-                if (!bOK)
+                if (!bOK)       // tracking이 false일때
                 {
-                    if ( mCurrentFrame.mnId<=(mnLastRelocFrameId+mnFramesToResetIMU) &&
-                         (mSensor==System::IMU_MONOCULAR || mSensor==System::IMU_STEREO))
+                    if ( mCurrentFrame.mnId<=(mnLastRelocFrameId+mnFramesToResetIMU) &&     // mnFramesToResetIMU : fps, //////정확한 의미?//////
+                         (mSensor==System::IMU_MONOCULAR || mSensor==System::IMU_STEREO))       
                     {
                         mState = LOST;
                     }
-                    else if(pCurrentMap->KeyFramesInMap()>10)
+                    else if(pCurrentMap->KeyFramesInMap()>10)       // KF 개수
                     {
                         cout << "KF in map: " << pCurrentMap->KeyFramesInMap() << endl;
                         mState = RECENTLY_LOST;
@@ -1893,33 +1858,33 @@ void Tracking::Track()
                     }
                 }
             }
-            else
+            else        // mState : not OK
             {
 
                 if (mState == RECENTLY_LOST)
                 {
-                    Verbose::PrintMess("Lost for a short time", Verbose::VERBOSITY_NORMAL);
+                    Verbose::PrintMess("Lost for a short time", Verbose::VERBOSITY_NORMAL);     // VERBOSITY_NORMAL : 1
 
                     bOK = true;
-                    if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO))
+                    if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO))     // imu
                     {
                         if(pCurrentMap->isImuInitialized())
                             PredictStateIMU();
                         else
                             bOK = false;
 
-                        if (mCurrentFrame.mTimeStamp-mTimeStampLost>time_recently_lost)
+                        if (mCurrentFrame.mTimeStamp-mTimeStampLost>time_recently_lost)     // time_recently_lost = 5
                         {
                             mState = LOST;
                             Verbose::PrintMess("Track Lost...", Verbose::VERBOSITY_NORMAL);
                             bOK=false;
                         }
                     }
-                    else
+                    else        // only vision
                     {
                         // TODO fix relocalization
-                        bOK = Relocalization();
-                        if(!bOK && mCurrentFrame.mTimeStamp-mTimeStampLost>time_recently_lost_visual)
+                        bOK = Relocalization();     // relocalization 되었는지
+                        if(!bOK && mCurrentFrame.mTimeStamp-mTimeStampLost>time_recently_lost_visual)       // relocalization되지 않았을 경우
                         {
                             mState = LOST;
                             Verbose::PrintMess("Track Lost...", Verbose::VERBOSITY_NORMAL);
@@ -1940,7 +1905,7 @@ void Tracking::Track()
                         CreateMapInAtlas();
 
                     if(mpLastKeyFrame)
-                        mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
+                        mpLastKeyFrame = static_cast<KeyFrame*>(NULL);      ///////
 
                     Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL);
 
@@ -1949,30 +1914,34 @@ void Tracking::Track()
             }
 
         }
-        else
+
+
+        else        // only localization mode
         {
             // Localization Mode: Local Mapping is deactivated (TODO Not available in inertial mode)
             if(mState==LOST)
             {
-                if(mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
+                if(mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)       // imu의 경우
                     Verbose::PrintMess("IMU. State LOST", Verbose::VERBOSITY_NORMAL);
                 bOK = Relocalization();
             }
             else
             {
-                if(!mbVO)
+                if(!mbVO)       // false : localization 하기에 matches가 충분할때
                 {
                     // In last frame we tracked enough MapPoints in the map
                     if(!mVelocity.empty())
-                    {
-                        bOK = TrackWithMotionModel();
+                    {   
+                        bOK = TrackWithMotionModel();       // last-current의 map point matches가 threshold 이상이면 true
                     }
                     else
                     {
                         bOK = TrackReferenceKeyFrame();
                     }
                 }
-                else
+
+
+                else        // true when there are no matches to points in the map, 매칭쌍 < 10 : true
                 {
                     // In last frame we tracked mainly "visual odometry" points.
 
@@ -1985,41 +1954,49 @@ void Tracking::Track()
                     vector<MapPoint*> vpMPsMM;
                     vector<bool> vbOutMM;
                     cv::Mat TcwMM;
+
+
+
                     if(!mVelocity.empty())
                     {
-                        bOKMM = TrackWithMotionModel();
-                        vpMPsMM = mCurrentFrame.mvpMapPoints;
-                        vbOutMM = mCurrentFrame.mvbOutlier;
+                        bOKMM = TrackWithMotionModel();     // last-current의 map point matches가 threshold 이상이면 true
+                        vpMPsMM = mCurrentFrame.mvpMapPoints;       // map point coordinate
+                        vbOutMM = mCurrentFrame.mvbOutlier;     // (bool) outlier인지
                         TcwMM = mCurrentFrame.mTcw.clone();
                     }
+
+
+
                     bOKReloc = Relocalization();
 
-                    if(bOKMM && !bOKReloc)
+                    if(bOKMM && !bOKReloc)      // last-current은 track하지만 relocalization은 아닌     ////// 1944줄과 의미 확인 필요//////
                     {
                         mCurrentFrame.SetPose(TcwMM);
                         mCurrentFrame.mvpMapPoints = vpMPsMM;
                         mCurrentFrame.mvbOutlier = vbOutMM;
 
-                        if(mbVO)
+                        if(mbVO)        // localization 하기에 matches가 충분하지 않을때
                         {
                             for(int i =0; i<mCurrentFrame.N; i++)
                             {
                                 if(mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
                                 {
-                                    mCurrentFrame.mvpMapPoints[i]->IncreaseFound();
+                                    mCurrentFrame.mvpMapPoints[i]->IncreaseFound();     // map point 개수에 추가
                                 }
                             }
                         }
                     }
-                    else if(bOKReloc)
+                    else if(bOKReloc)       // relocalization의 경우
                     {
                         mbVO = false;
                     }
 
-                    bOK = bOKReloc || bOKMM;
+                    bOK = bOKReloc || bOKMM;        // tracking, relocalization
                 }
             }
         }
+
+
 
         if(!mCurrentFrame.mpReferenceKF)
             mCurrentFrame.mpReferenceKF = mpReferenceKF;
@@ -2035,31 +2012,40 @@ void Tracking::Track()
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartLMTrack = std::chrono::steady_clock::now();
 #endif
+
+
         // If we have an initial estimation of the camera pose and matching. Track the local map.
-        if(!mbOnlyTracking)
+        if(!mbOnlyTracking)     //  mapping mode
         {
-            if(bOK)
+            if(bOK)     // track reference frame
             {
-                bOK = TrackLocalMap();
+                bOK = TrackLocalMap();      // 현재 frame의 map point 개수가 특정 수 이상일때 true
 
             }
+
+
             if(!bOK)
                 cout << "Fail to track local map!" << endl;
         }
-        else
+
+
+
+        else        // only localizing mode
         {
             // mbVO true means that there are few matches to MapPoints in the map. We cannot retrieve
             // a local map and therefore we do not perform TrackLocalMap(). Once the system relocalizes
             // the camera we will use the local map again.
-            if(bOK && !mbVO)
+            if(bOK && !mbVO)        // track reference frame + enough matches to MapPoints in the map
                 bOK = TrackLocalMap();
         }
 
-        if(bOK)
-            mState = OK;
+
+
+        if(bOK)     // track reference frame
+            mState = OK;        // OK = 2
         else if (mState == OK)
         {
-            if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
+            if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)      // imu fusion일 경우
             {
                 Verbose::PrintMess("Track lost for less than one second...", Verbose::VERBOSITY_NORMAL);
                 if(!pCurrentMap->isImuInitialized() || !pCurrentMap->GetIniertialBA2())
@@ -2070,12 +2056,16 @@ void Tracking::Track()
 
                 mState = RECENTLY_LOST;
             }
+
+
             else
                 mState = RECENTLY_LOST; // visual to lost
 
+
+
             if(mCurrentFrame.mnId>mnLastRelocFrameId+mMaxFrames)
             {
-                mTimeStampLost = mCurrentFrame.mTimeStamp;
+                mTimeStampLost = mCurrentFrame.mTimeStamp;      // lost된 시간 저장
             }
         }
 
@@ -2095,7 +2085,7 @@ void Tracking::Track()
         {
             if(bOK)
             {
-                if(mCurrentFrame.mnId==(mnLastRelocFrameId+mnFramesToResetIMU))
+                if(mCurrentFrame.mnId==(mnLastRelocFrameId+mnFramesToResetIMU))     // mnFramesToResetIMU : camera fps
                 {
                     cout << "RESETING FRAME!!!" << endl;
                 }
@@ -2103,6 +2093,12 @@ void Tracking::Track()
                     mLastBias = mCurrentFrame.mImuBias;
             }
         }
+
+
+
+
+
+
 
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_EndLMTrack = std::chrono::steady_clock::now();
@@ -2113,39 +2109,52 @@ void Tracking::Track()
 
         // Update drawer
         mpFrameDrawer->Update(this);
-        if(!mCurrentFrame.mTcw.empty())
-            mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
 
-        if(bOK || mState==RECENTLY_LOST)
+
+        if(!mCurrentFrame.mTcw.empty())
+            mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);      // camera pose
+
+
+
+        if(bOK || mState==RECENTLY_LOST)        // track frame or RECENTLY_LOST
         {
             // Update motion model
-            if(!mLastFrame.mTcw.empty() && !mCurrentFrame.mTcw.empty())
+            if(!mLastFrame.mTcw.empty() && !mCurrentFrame.mTcw.empty())     // motion정보는 있을때
             {
                 cv::Mat LastTwc = cv::Mat::eye(4,4,CV_32F);
                 mLastFrame.GetRotationInverse().copyTo(LastTwc.rowRange(0,3).colRange(0,3));
                 mLastFrame.GetCameraCenter().copyTo(LastTwc.rowRange(0,3).col(3));
-                mVelocity = mCurrentFrame.mTcw*LastTwc;
+                mVelocity = mCurrentFrame.mTcw*LastTwc;     // last to current T
             }
+
+
             else
                 mVelocity = cv::Mat();
 
+
+
             if(mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
                 mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
+
+
 
             // Clean VO matches
             for(int i=0; i<mCurrentFrame.N; i++)
             {
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
                 if(pMP)
-                    if(pMP->Observations()<1)
+                    if(pMP->Observations()<1)       // map point 개수, 초기화
                     {
                         mCurrentFrame.mvbOutlier[i] = false;
                         mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
                     }
             }
 
+
+
+
             // Delete temporal MapPoints
-            for(list<MapPoint*>::iterator lit = mlpTemporalPoints.begin(), lend =  mlpTemporalPoints.end(); lit!=lend; lit++)
+            for(list<MapPoint*>::iterator lit = mlpTemporalPoints.begin(), lend =  mlpTemporalPoints.end(); lit!=lend; lit++)       // 모든 temp map point에 대해
             {
                 MapPoint* pMP = *lit;
                 delete pMP;
@@ -2155,7 +2164,12 @@ void Tracking::Track()
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_StartNewKF = std::chrono::steady_clock::now();
 #endif
-            bool bNeedKF = NeedNewKeyFrame();
+
+
+
+
+
+            bool bNeedKF = NeedNewKeyFrame();       ////확인////
 
 
 
@@ -2171,25 +2185,32 @@ void Tracking::Track()
             vdNewKF_ms.push_back(timeNewKF);
 #endif
 
+
+
+
             // We allow points with high innovation (considererd outliers by the Huber Function)
             // pass to the new keyframe, so that bundle adjustment will finally decide
             // if they are outliers or not. We don't want next frame to estimate its position
             // with those points so we discard them in the frame. Only has effect if lastframe is tracked
             for(int i=0; i<mCurrentFrame.N;i++)
             {
-                if(mCurrentFrame.mvpMapPoints[i] && mCurrentFrame.mvbOutlier[i])
+                if(mCurrentFrame.mvpMapPoints[i] && mCurrentFrame.mvbOutlier[i])        // outlier면 null
                     mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
             }
         }
 
+
+
         // Reset if the camera get lost soon after initialization
         if(mState==LOST)
         {
-            if(pCurrentMap->KeyFramesInMap()<=5)
+            if(pCurrentMap->KeyFramesInMap()<=5)        // KeyFramesInMap : keyframe의 개수
             {
                 mpSystem->ResetActiveMap();
                 return;
             }
+
+
             if ((mSensor == System::IMU_MONOCULAR) || (mSensor == System::IMU_STEREO))
                 if (!pCurrentMap->isImuInitialized())
                 {
@@ -2210,18 +2231,21 @@ void Tracking::Track()
 
 
 
+
+
+
     if(mState==OK || mState==RECENTLY_LOST)
     {
         // Store frame pose information to retrieve the complete camera trajectory afterwards.
         if(!mCurrentFrame.mTcw.empty())
         {
-            cv::Mat Tcr = mCurrentFrame.mTcw*mCurrentFrame.mpReferenceKF->GetPoseInverse();
+            cv::Mat Tcr = mCurrentFrame.mTcw*mCurrentFrame.mpReferenceKF->GetPoseInverse();     // GetPoseInverse : camera to world, Tcr : reference frame to current frame
             mlRelativeFramePoses.push_back(Tcr);
             mlpReferences.push_back(mCurrentFrame.mpReferenceKF);
             mlFrameTimes.push_back(mCurrentFrame.mTimeStamp);
             mlbLost.push_back(mState==LOST);
         }
-        else
+        else        // mTcw.empty의 경우 마지막 frame의 정보를 저장
         {
             // This can happen if tracking is lost
             mlRelativeFramePoses.push_back(mlRelativeFramePoses.back());
@@ -2233,90 +2257,67 @@ void Tracking::Track()
     }
 }
 
+
 void Tracking::StereoInitialization()
 {
-    // N: Keypoints의 개수
-    if(mCurrentFrame.N>500) // Keypoints의 개수가 500개 이상일 때 초기화를 진행하고, / 이하인 경우에는 초기화를 진행하지 않음
+    if(mCurrentFrame.N>500)
     {
-        if (mSensor == System::IMU_STEREO) // Stereo-Inertial mode인 경우
+        if (mSensor == System::IMU_STEREO)
         {
-            // CurrentFrame과 LastFrame에 대한 IMU-Preintegration 정보가 존재하는지 체크
             if (!mCurrentFrame.mpImuPreintegrated || !mLastFrame.mpImuPreintegrated)
             {
                 cout << "not IMU meas" << endl;
-                return; // CurrentFrame과 LastFrame에 대한 IMU-Preintegration 정보가 존재하지 않으면 초기화 종료
+                return;
             }
 
-            // CurrentFrame과 LastFrame에 대한 IMU-Preintegration의 평균 가속도값의 차이가 0.5 이상인지 확인
             if (cv::norm(mCurrentFrame.mpImuPreintegratedFrame->avgA-mLastFrame.mpImuPreintegratedFrame->avgA)<0.5)
             {
                 cout << "not enough acceleration" << endl;
-                return; // CurrentFrame과 LastFrame에 대한 IMU-Preintegration의 평균값의 차이가 0.5 미만인 경우 초기화 종료(충분한 움직임 값을 획득해야됨)
+                return;
             }
-            
-            // Last KeyFrame에 대한 IMU-Preintegration 객체를 초기화 (메모리를 해제)
+
             if(mpImuPreintegratedFromLastKF)
                 delete mpImuPreintegratedFromLastKF;
 
-            // IMU::Bias(): IMU sensor의 noise를 반환 [acceleration(3), angular velocity(3)]
-            //            : -> bax,bay,baz,bwx,bwy,bwz
-            // *mpImuCalib: IMU-Camera에 대한 Transformation matrix 정보 (Calibration 정보)
-            //            : cv::Mat Tbc;
-            //            : cv::Mat Cov, CovWalk;
-            // IMU::Preintegrated(): 딱히 계산을 하지는 않음. White noise와 Random walk noise에 대한 coveriance matrix와 noise값을 복사하여 초기화만함
             mpImuPreintegratedFromLastKF = new IMU::Preintegrated(IMU::Bias(),*mpImuCalib);
-
-            // mpImuPreintegratedFromLastKF 객체의 주소값을 넘김
             mCurrentFrame.mpImuPreintegrated = mpImuPreintegratedFromLastKF;
         }
 
         // Set Frame pose to the origin (In case of inertial SLAM to imu)
-        // CurrentFrame을 Global-coordinate으로 설정함: Origin(0,0,0)
         if (mSensor == System::IMU_STEREO)
         {
-            cv::Mat Rwb0 = mCurrentFrame.mImuCalib.Tcb.rowRange(0,3).colRange(0,3).clone(); // [Rotation]    imu -> cam
-            cv::Mat twb0 = mCurrentFrame.mImuCalib.Tcb.rowRange(0,3).col(3).clone();        // [Translation] imu -> cam
-            mCurrentFrame.SetImuPoseVelocity(Rwb0, twb0, cv::Mat::zeros(3,1,CV_32F));       // world -> cam -> body
+            cv::Mat Rwb0 = mCurrentFrame.mImuCalib.Tcb.rowRange(0,3).colRange(0,3).clone();
+            cv::Mat twb0 = mCurrentFrame.mImuCalib.Tcb.rowRange(0,3).col(3).clone();
+            mCurrentFrame.SetImuPoseVelocity(Rwb0, twb0, cv::Mat::zeros(3,1,CV_32F));
         }
         else
             mCurrentFrame.SetPose(cv::Mat::eye(4,4,CV_32F));
 
         // Create KeyFrame
-        // KeyFrame에 대한 객체를 생성합니다.
-        //   - mCurrentFrame로부터 CurrentFrame의 Left_image, Right_image를 저장합니다.
-        //   - mCurrentFrame로부터 Global pose에 대한 정보(Tcw)와 IMU bias정보를 저장합니다.
-        //   - mpAtlas->GetCurrentMap()로부터 현재 map에 대한 id정보를 저장합니다.
-        //   - mpKeyFrameDB의 정보를 그대로 저장합니다. (정확한 용도는 잘몰르겠음 ???)
         KeyFrame* pKFini = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
 
         // Insert KeyFrame in the map
-        // 생성된 KeyFrame 객체를 추가합니다.
         mpAtlas->AddKeyFrame(pKFini);
 
         // Create MapPoints and asscoiate to KeyFrame
-        if(!mpCamera2){ // FishEye가 아니면
-            // MapPoint를 생성합니다.
-            // mCurrentFrame.N은 keypoint의 개수
+        if(!mpCamera2){
             for(int i=0; i<mCurrentFrame.N;i++)
             {
-                // Feature_point에 대한 Depth 정보를 가져옵니다.
-                float z = mCurrentFrame.mvDepth[i];                
-                if(z>0) // depth값이 존재하면
+                float z = mCurrentFrame.mvDepth[i];
+                if(z>0)
                 {
-                    cv::Mat x3D = mCurrentFrame.UnprojectStereo(i); // Camera perspective model을 이용하여 3D map-point를 계산합니다.
-                    MapPoint* pNewMP = new MapPoint(x3D,pKFini,mpAtlas->GetCurrentMap()); // Global(world) Map포인트로 변환후 저장합니다.
-                    pNewMP->AddObservation(pKFini,i); // Current Frame에서 관찰된 keypoint를 추가합니다.
-                    pKFini->AddMapPoint(pNewMP,i);    // KeyFrame 객체에 3D Map-point를 추가합니다.
-                    pNewMP->ComputeDistinctiveDescriptors(); // 현재 keypoint에 대한 Descriptor를 계산한다. (정확히 잘 몰르겠음)
-                                                             // Map-point가 추가적으로 생겼을때, 추가할지 기존의 map-point에 업데이트할 지, 확인하기 위한 Descriptor를 생성하는것 같음
-                                                             // 또한 BA와 tracking features의 수에 대하여 더 좋은 descriptor가 생성된다면, descriptor를 갱신하는 것 같음
-                    pNewMP->UpdateNormalAndDepth(); // MapPoint에 대하여 Normal vector와 Depth 정보를 업데이트
-                    mpAtlas->AddMapPoint(pNewMP);   // Atlas객체에 3D Map-point를 추가합니다.
+                    cv::Mat x3D = mCurrentFrame.UnprojectStereo(i);
+                    MapPoint* pNewMP = new MapPoint(x3D,pKFini,mpAtlas->GetCurrentMap());
+                    pNewMP->AddObservation(pKFini,i);
+                    pKFini->AddMapPoint(pNewMP,i);
+                    pNewMP->ComputeDistinctiveDescriptors();
+                    pNewMP->UpdateNormalAndDepth();
+                    mpAtlas->AddMapPoint(pNewMP);
 
-                    mCurrentFrame.mvpMapPoints[i]=pNewMP; // 갱신된 Map-point정보를 업데이트해줌
+                    mCurrentFrame.mvpMapPoints[i]=pNewMP;
                 }
             }
-        } else{ // fisheye에 대한 내용(내용은 위와 유사함)
+        } else{
             for(int i = 0; i < mCurrentFrame.Nleft; i++){
                 int rightIndex = mCurrentFrame.mvLeftToRightMatch[i];
                 if(rightIndex != -1){
@@ -2324,7 +2325,7 @@ void Tracking::StereoInitialization()
 
                     MapPoint* pNewMP = new MapPoint(x3D,pKFini,mpAtlas->GetCurrentMap());
 
-                    pNewMP->AddObservation(pKFini,i); 
+                    pNewMP->AddObservation(pKFini,i);
                     pNewMP->AddObservation(pKFini,rightIndex + mCurrentFrame.Nleft);
 
                     pKFini->AddMapPoint(pNewMP,i);
@@ -2340,29 +2341,24 @@ void Tracking::StereoInitialization()
             }
         }
 
-        // 출력문
         Verbose::PrintMess("New Map created with " + to_string(mpAtlas->MapPointsInMap()) + " points", Verbose::VERBOSITY_QUIET);
 
-        mpLocalMapper->InsertKeyFrame(pKFini); // LocalMapper에 current key-frame에 대한 정보를 추가
+        mpLocalMapper->InsertKeyFrame(pKFini);
 
-        mLastFrame = Frame(mCurrentFrame);      // currentframe에 대한 정보를 last-keyframe에 정보를 저장하고, 새로운 frame을 받을 준비
-        mnLastKeyFrameId=mCurrentFrame.mnId;    // currentframe에 대한 id정보를 저장
-        mpLastKeyFrame = pKFini;                // current key-frame에 대한 정보를 last-keyframe에 저장
-        mnLastRelocFrameId = mCurrentFrame.mnId;// current key-frame에 대한 id 정보를 last-keyframe에 저장
+        mLastFrame = Frame(mCurrentFrame);
+        mnLastKeyFrameId=mCurrentFrame.mnId;
+        mpLastKeyFrame = pKFini;
+        mnLastRelocFrameId = mCurrentFrame.mnId;
 
-        mvpLocalKeyFrames.push_back(pKFini);    // local keyframe에 저장
-        mvpLocalMapPoints=mpAtlas->GetAllMapPoints(); // Atlas의 map-point의 vector 포인터를 lcoal-map-point에 넘겨줌
-        mpReferenceKF = pKFini; // 현재 KF를 reference KF로 설정
-        mCurrentFrame.mpReferenceKF = pKFini; // 현재 KF를 currentFrame의 referenceKF로 설정
+        mvpLocalKeyFrames.push_back(pKFini);
+        mvpLocalMapPoints=mpAtlas->GetAllMapPoints();
+        mpReferenceKF = pKFini;
+        mCurrentFrame.mpReferenceKF = pKFini;
 
-        // mvpLocalMapPoints를 Atlas의 refrence KF로 설정
-        // Atlas의 ReferenceMapPoint는 Map을 Drawing할 때 사용됨
         mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
 
-        // KF를 저장
         mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.push_back(pKFini);
 
-        // Map에 point를 drawing할때 필요한 좌표계 변환 정보를 저장
         mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
 
         mState=OK;
@@ -2597,85 +2593,60 @@ void Tracking::CreateInitialMapMonocular()
 }
 
 
-// #############################################################################################################################################
-// 정진용 연구원님의 블로그에서 ORBSLAM-Atlas 내용 인용 (http://jinyongjeong.github.io/2019/11/07/IROS2019_SLAM_list/)
-// [IROS 2019] ORBSLAM-Atlas: a robust and accurate multi-map system
-// ORBSLAM-Atals란?
-// - 기존 ORB-SLAM은 tracking loss가 발생하면 mapping이 중단되지만, ORB-SLAM-Atlas는 tracking loss가 발생하면 새로운 submap을 생성하고, 기존의 submap과 동일 영역을 찾으면 merge
-// - 제한없이 여러개의 submap을 다루기 위한 시스템
-// - submap간의 overlap을 검출 및 merge
-// - 각 atlas는 효율적인 Place recognition을 위해 각각의 unique한 DBow를 갖고 있음
-// #############################################################################################################################################
 void Tracking::CreateMapInAtlas()
 {
-    mnLastInitFrameId = mCurrentFrame.mnId; // currentFrame의 ID를 LastFrame ID에 복사
-    
-    // 새로운 map을 생성
-    // map들은 vector<Map> 자료형에 의해 관리됨 (Map.h에서의 class 객체)
-    // 기존 맵을 있다면 저장하고, 새로운 맵을 생성
-    mpAtlas->CreateNewMap(); 
-
-    // Stereo+IMU or Mono+IMU 시스템인 경우
+    mnLastInitFrameId = mCurrentFrame.mnId;
+    mpAtlas->CreateNewMap();
     if (mSensor==System::IMU_STEREO || mSensor == System::IMU_MONOCULAR)
-        mpAtlas->SetInertialSensor(); // IMU가 사용되는지 유무를 설정하는 함수 // mbIsInertial = true가 전부
-    mbSetInit=false; // 초기화 유무에 대한 flag
+        mpAtlas->SetInertialSensor();
+    mbSetInit=false;
 
-    mnInitialFrameId = mCurrentFrame.mnId+1; // Initial-Frame id를 마지막 프레임의 'ID+1'로 할당
-                                             // 새로운 atlas-map에 대한 시작 프레임 id를 설정
-    mState = NO_IMAGES_YET; // 새로운 이미지가 없는 상태로 설정
-    
-    // 새로 생성된 atlas-map에 대한 변수들은 마지막 KF에 대한 변수들의 값을 가져오고, 재시작
+    mnInitialFrameId = mCurrentFrame.mnId+1;
+    mState = NO_IMAGES_YET;
+
+    // Restart the variable with information about the last KF
     mVelocity = cv::Mat();
-    mnLastRelocFrameId = mnLastInitFrameId; // 기존 map에 대한 마지막 frame id(mnLastInitFrameId)는 relocalization을 위한 시작 프레임으로 설정
+    mnLastRelocFrameId = mnLastInitFrameId; // The last relocation KF_id is the current id, because it is the new starting point for new map
     Verbose::PrintMess("First frame id in map: " + to_string(mnLastInitFrameId+1), Verbose::VERBOSITY_NORMAL);
-    mbVO = false; // 마지막 KF에 충분한 MapPoint의 존재 유무에 대한 flag
-
-    // mono || mono-imu인 경우
+    mbVO = false; // Init value for know if there are enough MapPoints in the last KF
     if(mSensor == System::MONOCULAR || mSensor == System::IMU_MONOCULAR)
     {
-        // 초기화 변수에 대한 제거
-        if(mpInitializer) 
+        if(mpInitializer)
             delete mpInitializer;
-        
-        // 초기화 변수에 대한 재할당
         mpInitializer = static_cast<Initializer*>(NULL);
     }
 
-    // mono-imu || stereo-imu인 경우
     if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO ) && mpImuPreintegratedFromLastKF)
     {
-        // 마지막 KF에 대한 preintegration 변수 메모리를 제거
         delete mpImuPreintegratedFromLastKF;
-
-        // 새로운 preintegration객체를 생성
         mpImuPreintegratedFromLastKF = new IMU::Preintegrated(IMU::Bias(),*mpImuCalib);
     }
 
-    // mpLastKeyFrame변수 초기화
     if(mpLastKeyFrame)
         mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
 
-    // mpReferenceKF 초기화
     if(mpReferenceKF)
         mpReferenceKF = static_cast<KeyFrame*>(NULL);
 
-    // 각 변수 초기화
-    mLastFrame = Frame();    // mLastFrame 초기화
-    mCurrentFrame = Frame(); // mCurrentFrame 초기화
-    mvIniMatches.clear();    // mvIniMatches 초기화
+    mLastFrame = Frame();
+    mCurrentFrame = Frame();
+    mvIniMatches.clear();
 
     mbCreatedMap = true;
+
 }
 
 void Tracking::CheckReplacedInLastFrame()
 {
+    // class Frame mLastFrame, N은 keypoint의 개수
     for(int i =0; i<mLastFrame.N; i++)
     {
+        // class MapPoint pMP, mvpMapPoints에는 keypoint의 좌표와 depth
         MapPoint* pMP = mLastFrame.mvpMapPoints[i];
 
         if(pMP)
         {
-            MapPoint* pRep = pMP->GetReplaced();
+            MapPoint* pRep = pMP->GetReplaced();    // mutex는 여러 스레드의 공유자원에 대한 동시 접근을 막아 주는 역할
             if(pRep)
             {
                 mLastFrame.mvpMapPoints[i] = pRep;
@@ -2692,7 +2663,7 @@ bool Tracking::TrackReferenceKeyFrame()
 
     // We perform first an ORB matching with the reference keyframe
     // If enough matches are found we setup a PnP solver
-    ORBmatcher matcher(0.7,true);
+    ORBmatcher matcher(0.7,true);       // 0.7은 hamming distance 의 유사도 비율, true : check orientation (양수)
     vector<MapPoint*> vpMapPointMatches;
 
     int nmatches = matcher.SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);
@@ -2704,7 +2675,7 @@ bool Tracking::TrackReferenceKeyFrame()
     }
 
     mCurrentFrame.mvpMapPoints = vpMapPointMatches;
-    mCurrentFrame.SetPose(mLastFrame.mTcw);
+    mCurrentFrame.SetPose(mLastFrame.mTcw);     // mTcw : camera pose 4*4
 
     //mCurrentFrame.PrintPointDistribution();
 
@@ -2718,13 +2689,13 @@ bool Tracking::TrackReferenceKeyFrame()
     {
         if(mCurrentFrame.mvpMapPoints[i])
         {
-            if(mCurrentFrame.mvbOutlier[i])
+            if(mCurrentFrame.mvbOutlier[i])     //mvbOutlier : bool형의 outlier
             {
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
 
-                mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
+                mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);     // static_cast : 자료형 변환, NULL pointer 변수 초기화
                 mCurrentFrame.mvbOutlier[i]=false;
-                if(i < mCurrentFrame.Nleft){
+                if(i < mCurrentFrame.Nleft){        //Nleft : 왼쪽 이미지의 keypoints 개수
                     pMP->mbTrackInView = false;
                 }
                 else{
@@ -2734,7 +2705,7 @@ bool Tracking::TrackReferenceKeyFrame()
                 pMP->mnLastFrameSeen = mCurrentFrame.mnId;
                 nmatches--;
             }
-            else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+            else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)        // Observation 정의
                 nmatchesMap++;
         }
     }
@@ -2749,17 +2720,17 @@ bool Tracking::TrackReferenceKeyFrame()
 void Tracking::UpdateLastFrame()
 {
     // Update pose according to reference keyframe
-    KeyFrame* pRef = mLastFrame.mpReferenceKF;
-    cv::Mat Tlr = mlRelativeFramePoses.back();
+    KeyFrame* pRef = mLastFrame.mpReferenceKF;      //mpReferenceKF : reference keyframe
+    cv::Mat Tlr = mlRelativeFramePoses.back();      // 마지막 요소를 반환
     mLastFrame.SetPose(Tlr*pRef->GetPose());
 
-    if(mnLastKeyFrameId==mLastFrame.mnId || mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR || !mbOnlyTracking)
-        return;
+    if(mnLastKeyFrameId==mLastFrame.mnId || mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR || !mbOnlyTracking)        // True if local mapping is deactivated and we are performing only localization
+        return;     // mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR 확인
 
     // Create "visual odometry" MapPoints
     // We sort points according to their measured depth by the stereo/RGB-D sensor
     vector<pair<float,int> > vDepthIdx;
-    vDepthIdx.reserve(mLastFrame.N);
+    vDepthIdx.reserve(mLastFrame.N);        // 추가 공간 할당
     for(int i=0; i<mLastFrame.N;i++)
     {
         float z = mLastFrame.mvDepth[i];
@@ -2776,10 +2747,10 @@ void Tracking::UpdateLastFrame()
 
     // We insert all close points (depth<mThDepth)
     // If less than 100 close points, we insert the 100 closest ones.
-    int nPoints = 0;
+    int nPoints = 0;        // nPoints : map point의 개수
     for(size_t j=0; j<vDepthIdx.size();j++)
     {
-        int i = vDepthIdx[j].second;
+        int i = vDepthIdx[j].second;        // i = index
 
         bool bCreateNew = false;
 
@@ -2793,7 +2764,7 @@ void Tracking::UpdateLastFrame()
 
         if(bCreateNew)
         {
-            cv::Mat x3D = mLastFrame.UnprojectStereo(i);
+            cv::Mat x3D = mLastFrame.UnprojectStereo(i);        // global coordinate
             MapPoint* pNewMP = new MapPoint(x3D,mpAtlas->GetCurrentMap(),&mLastFrame,i);
 
             mLastFrame.mvpMapPoints[i]=pNewMP;
@@ -2815,73 +2786,63 @@ void Tracking::UpdateLastFrame()
 
 bool Tracking::TrackWithMotionModel()
 {
-    ORBmatcher matcher(0.9,true);   // matcher라는 ORBmatcher 클래스 변수 선언
+    ORBmatcher matcher(0.9,true);
 
     // Update last frame pose according to its reference keyframe
     // Create "visual odometry" points if in Localization Mode
-    // 만약, Localization Mode일 경우에는 "visual odometry"용 points를 만든다.
-    UpdateLastFrame();  // Reference keyframe에 따라 마지막 frame의 camera pose를 업데이트
+    UpdateLastFrame();
 
-    // 만약 current map에 IMU 초기화가 되어있고, 
-    // 현재 Frame의 ID가 마지막 Relocalization 할 때 사용했던 Frame ID + IMU를 초기화하는 Frame ID보다 클 경우
-    // (IMU data는 지속적으로 들어오는데, 이미지에서 tracking이 제대로 되고 있지 않다고 판단할 때)
+
+
     if (mpAtlas->isImuInitialized() && (mCurrentFrame.mnId>mnLastRelocFrameId+mnFramesToResetIMU))
     {
-        // Predict state with IMU if it is initialized and it doesnt need reset
-        PredictStateIMU();  // IMU의 state만 추정 , pose estimation을 진행 (IMU vs ORB Matching)일때 IMU를 활용하여 state를 추정
-        return true;    // Motion model을 가정한 것이 true 
+        // Predict ste with IMU if it is initialized and it doesnt need reset
+        PredictStateIMU();
+        return true;
     }
-    else   // Frame 간격이 이미지 tracking이 잘 되고 촘촘하게 되어있을 때 
+    else
     {
-        mCurrentFrame.SetPose(mVelocity*mLastFrame.mTcw);   // Current Frame의 카메라 Pose를 새로 지정
-        // Pose를 구할 때 등속도 운동을 가정하여 World to Camera Translation Matrix에 mVelocity를 곱해준다.
-        // mVelocity는 IMU data를 이용하여 계산을 진행한 것 (지속적으로 계산을 진행)
+        mCurrentFrame.SetPose(mVelocity*mLastFrame.mTcw);
     }
 
+
     fill(mCurrentFrame.mvpMapPoints.begin(),mCurrentFrame.mvpMapPoints.end(),static_cast<MapPoint*>(NULL));
-    // Current Frame의 MapPoint vector를 초기화
 
     // Project points seen in previous frame
     int th;
 
-    if(mSensor==System::STEREO) // Threshold 값 지정, ORB Matcher클래스 안에 있는 함수를 사용하는데 Window Size 크기를 정해줌
-        th=7;  
+    if(mSensor==System::STEREO)
+        th=7;
     else
-        th=15;  
+        th=15;
 
-    // Current Frame과 Last Frame의 Match하는 point 갯수 찾기
     int nmatches = matcher.SearchByProjection(mCurrentFrame,mLastFrame,th,mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR);
 
     // If few matches, uses a wider window search
-    // Match 되는 point의 갯수가 적을 경우 다시 Window의 Size를 키워 Match하는 point의 갯수를 찾는다.
     if(nmatches<20)
     {
         Verbose::PrintMess("Not enough matches, wider window search!!", Verbose::VERBOSITY_NORMAL);
         fill(mCurrentFrame.mvpMapPoints.begin(),mCurrentFrame.mvpMapPoints.end(),static_cast<MapPoint*>(NULL));
-        // Current Frame의 MapPoint vector를 초기화
 
         nmatches = matcher.SearchByProjection(mCurrentFrame,mLastFrame,2*th,mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR);
         Verbose::PrintMess("Matches with wider search: " + to_string(nmatches), Verbose::VERBOSITY_NORMAL);
 
     }
 
-    // Window의 Size를 키웠는데도 matching되는 point의 갯수가 부족한 경우
     if(nmatches<20)
     {
         Verbose::PrintMess("Not enough matches!!", Verbose::VERBOSITY_NORMAL);
         if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
-            return true;    // IMU_MONOCULAR, IMU_STEREO 인 경우는 Motion model을 가정한 것이 true
+            return true;
         else
-            return false;   // MONOCULAR, STEREO인 경우는 Motion model을 가정한 것이 false
+            return false;
     }
 
-
     // Optimize frame pose with all matches
-    Optimizer::PoseOptimization(&mCurrentFrame);  // Update된 matching point를 이용하여 Current Frame의 pose를 최적화
+    Optimizer::PoseOptimization(&mCurrentFrame);
 
-    // Discard outliers - Outlier 버리기
+    // Discard outliers
     int nmatchesMap = 0;
-    // Current Frame의 Key points만큼 for문
     for(int i =0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
@@ -2890,37 +2851,32 @@ bool Tracking::TrackWithMotionModel()
             {
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
 
-                mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL); // Current Frame MapPoint 초기화
-                mCurrentFrame.mvbOutlier[i]=false;  // Current Frame MapPoint Outlier 상태 초기화
-
-                // 왼쪽이나 오른쪽 TrackInView 변수를 false로 지정
+                mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
+                mCurrentFrame.mvbOutlier[i]=false;
                 if(i < mCurrentFrame.Nleft){
-                    pMP->mbTrackInView = false; // 현재 Current Frame의 Map point가 보인다는 변수(TrackInView)를 false로 선언
-                    // Frame Class에 isInFrustum()함수에서만 true로 만들어준다.
+                    pMP->mbTrackInView = false;
                 }
                 else{
-                    pMP->mbTrackInViewR = false;  // 현재 Current Frame의 Map point가 보인다는 변수(TrackInView)를 false로 선언
+                    pMP->mbTrackInViewR = false;
                 }
-
-                pMP->mnLastFrameSeen = mCurrentFrame.mnId;  // Map point에 있는 Last Frame 보여지는 변수를 Current Frame으로 변경
-                nmatches--; // Outlier 제거
+                pMP->mnLastFrameSeen = mCurrentFrame.mnId;
+                nmatches--;
             }
-
-            else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)    
-                nmatchesMap++;  // Matching되는 Map point 갯수 증가
+            else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+                nmatchesMap++;
         }
     }
 
-    if(mbOnlyTracking)  // 만약 local mapping이 비활성화 되어있고 Localizaation만 수행하는 경우
+    if(mbOnlyTracking)
     {
         mbVO = nmatchesMap<10;
-        return nmatches>20;    // Match되는 point의 갯수에 따라 Motion model인지 아닌지 결정 
+        return nmatches>20;
     }
 
     if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
-        return true;    // IMU_MONOCULAR, IMU_STEREO 인 경우는 Motion model을 가정한 것이 true
+        return true;
     else
-        return nmatchesMap>=10; // Outlier를 제거한 Map point의 개수에 따라 Motion model인지 아닌지 결정
+        return nmatchesMap>=10;
 }
 
 bool Tracking::TrackLocalMap()
@@ -2928,12 +2884,12 @@ bool Tracking::TrackLocalMap()
 
     // We have an estimation of the camera pose and some map points tracked in the frame.
     // We retrieve the local map and try to find matches to points in the local map.
-    mTrackedFr++;   // 디버깅용으로 넣어둔 변수 (Tracking에 다른 곳에서 안씀)
+    mTrackedFr++;
 
 #ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_StartLMUpdate = std::chrono::steady_clock::now();
 #endif
-    UpdateLocalMap();   // Local Map을 Update
+    UpdateLocalMap();
 #ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_StartSearchLP = std::chrono::steady_clock::now();
 
@@ -2941,7 +2897,7 @@ bool Tracking::TrackLocalMap()
     vdUpdatedLM_ms.push_back(timeUpdatedLM_ms);
 #endif
 
-    SearchLocalPoints();    // Local Map Point를 검색 (Update하는 의미로 이해)
+    SearchLocalPoints();
 #ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_StartPoseOpt = std::chrono::steady_clock::now();
 
@@ -2950,8 +2906,6 @@ bool Tracking::TrackLocalMap()
 #endif
 
     // TOO check outliers before PO
-    // Pose Optimization을 하기 전에 Outlier check
-    // Tracking 에서는 aux1, aux2 변수가 쓰이지 않는 것으로 보아 디버깅용으로 추정
     int aux1 = 0, aux2=0;
     for(int i=0; i<mCurrentFrame.N; i++)
         if( mCurrentFrame.mvpMapPoints[i])
@@ -2962,29 +2916,26 @@ bool Tracking::TrackLocalMap()
         }
 
     int inliers;
-    if (!mpAtlas->isImuInitialized())   // Atlas에 IMU가 초기화 되어 있지 않다면
-        Optimizer::PoseOptimization(&mCurrentFrame);    // Current Frame을 이용하여 camera pose를 최적화
-    else    // Atlas에 IMU가 초기화 되어 있다면
+    if (!mpAtlas->isImuInitialized())
+        Optimizer::PoseOptimization(&mCurrentFrame);
+    else
     {
-        // Current Frame의 ID보다 Last Relocalization Frame ID와 IMU를 Reset한 ID의 합이 크거나 같다면
         if(mCurrentFrame.mnId<=mnLastRelocFrameId+mnFramesToResetIMU)
         {
             Verbose::PrintMess("TLM: PoseOptimization ", Verbose::VERBOSITY_DEBUG);
-            Optimizer::PoseOptimization(&mCurrentFrame);     // Current Frame을 이용하여 camera pose를 최적화
+            Optimizer::PoseOptimization(&mCurrentFrame);
         }
-        else    // Current Frame의 ID보다 Last Relocalization Frame ID와 IMU를 Reset한 ID의 합이 작다면
+        else
         {
-            if(!mbMapUpdated)   // Map update가 되지 않았을 때
+            if(!mbMapUpdated)
             {
                 Verbose::PrintMess("TLM: PoseInertialOptimizationLastFrame ", Verbose::VERBOSITY_DEBUG);
                 inliers = Optimizer::PoseInertialOptimizationLastFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
-                // Last Frame의 이용하여 Camera-Inertial pose를 최적화 (?) - Last Frame을 활용
             }
-            else    // Map update가 되었을 때
+            else
             {
                 Verbose::PrintMess("TLM: PoseInertialOptimizationLastKeyFrame ", Verbose::VERBOSITY_DEBUG);
                 inliers = Optimizer::PoseInertialOptimizationLastKeyFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
-                // Last Key Frame의 이용하여 Camera-Inertial pose를 최적화 (?) - Last KeyFrame을 활용
             }
         }
     }
@@ -2995,10 +2946,9 @@ bool Tracking::TrackLocalMap()
     vdPoseOpt_ms.push_back(timePoseOpt_ms);
 #endif
 
-    vnKeyFramesLM.push_back(mvpLocalKeyFrames.size());  // Local Key Frame의 size를 vnKeyFramesLM에 저장
-    vnMapPointsLM.push_back(mvpLocalMapPoints.size());  // Local Map Point의 size를 vnMapPointsLM에 저장
+    vnKeyFramesLM.push_back(mvpLocalKeyFrames.size());
+    vnMapPointsLM.push_back(mvpLocalMapPoints.size());
 
-    // Tracking 에서는 aux1, aux2 변수가 쓰이지 않는 것으로 보아 디버깅용으로 추정
     aux1 = 0, aux2 = 0;
     for(int i=0; i<mCurrentFrame.N; i++)
         if( mCurrentFrame.mvpMapPoints[i])
@@ -3008,154 +2958,122 @@ bool Tracking::TrackLocalMap()
                 aux2++;
         }
 
-    mnMatchesInliers = 0;   // Match 된 Inliers counter를 위한 변수
+    mnMatchesInliers = 0;
 
     // Update MapPoints Statistics
-    for(int i=0; i<mCurrentFrame.N; i++)    // Current Frame의 Key points를 for문
+    for(int i=0; i<mCurrentFrame.N; i++)
     {
-        if(mCurrentFrame.mvpMapPoints[i])   // Map point 하나씩 돌기 위한 for문
+        if(mCurrentFrame.mvpMapPoints[i])
         {
-            if(!mCurrentFrame.mvbOutlier[i])    // Outlier가 아니라면
+            if(!mCurrentFrame.mvbOutlier[i])
             {
-                mCurrentFrame.mvpMapPoints[i]->IncreaseFound(); // Map point가 found 되었다는 변수를 증가
-                if(!mbOnlyTracking) // Mapping을 진행하고 있다면 (Localization mode가 아니라는 뜻)
+                mCurrentFrame.mvpMapPoints[i]->IncreaseFound();
+                if(!mbOnlyTracking)
                 {
-                    if(mCurrentFrame.mvpMapPoints[i]->Observations()>0) // Current Frame에서 Map point가 관찰이 될 경우
-                        mnMatchesInliers++; // Match 된 Inlier 변수 증가
+                    if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+                        mnMatchesInliers++;
                 }
-                else    // Localization mode일 때
-                    mnMatchesInliers++; // Match 된 Inlier 변수 증가
+                else
+                    mnMatchesInliers++;
             }
-            else if(mSensor==System::STEREO)    // Outlier인데 Sensor가 STEREO일 경우
-                mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);   // Map point를 NULL 값으로 초기화
+            else if(mSensor==System::STEREO)
+                mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
         }
     }
 
     // Decide if the tracking was succesful
     // More restrictive if there was a relocalization recently
-    // Inlier의 갯수를 통해 Tracking이 되고 있는지 안되고 있는지 판단
     mpLocalMapper->mnMatchesInliers=mnMatchesInliers;
     if(mCurrentFrame.mnId<mnLastRelocFrameId+mMaxFrames && mnMatchesInliers<50)
-    // Current Frame의 ID보다 Last Relocalization Frame ID와 Max Frame(FPS)의 합이 더 클 경우,
-    // Match 된 inlier의 갯수가 50 이하일 경우
-        return false;   // Local Map을 Tracking하지 못한다고 판단
+        return false;
 
     if((mnMatchesInliers>10)&&(mState==RECENTLY_LOST))
-    // Match 된 Inlier의 수가 10을 넘고, Tracking state가 RECENTLY_LOST일 경우
-        return true;    // Local Map을 Tracking을 하고 있다고 판단
+        return true;
 
 
-    if (mSensor == System::IMU_MONOCULAR)   // Mode가 Mono-Inertial일 때
+    if (mSensor == System::IMU_MONOCULAR)
     {
-        if(mnMatchesInliers<15) // Match 된 inlier의 갯수가 15 이하일 경우
+        if(mnMatchesInliers<15)
         {
-            return false;   // Local Map을 Tracking하지 못한다고 판단
-        }
-        else    
-            return true;    // Local Map을 Tracking을 하고 있다고 판단
-    }
-
-    else if (mSensor == System::IMU_STEREO) // Mode가 Stereo-Inertial일 때
-    {
-        if(mnMatchesInliers<15) // Match 된 inlier의 갯수가 15 이하일 경우
-        {
-            return false;   // Local Map을 Tracking하지 못한다고 판단
+            return false;
         }
         else
-            return true;    // Local Map을 Tracking을 하고 있다고 판단
+            return true;
     }
-
-    else    // Mode가 Stereo 그리고 Monocular일 경우
+    else if (mSensor == System::IMU_STEREO)
     {
-        if(mnMatchesInliers<30) // Match 된 inlier의 갯수가 30 이하일 경우
-            return false;   // Local Map을 Tracking하지 못한다고 판단
+        if(mnMatchesInliers<15)
+        {
+            return false;
+        }
         else
-            return true;    // Local Map을 Tracking을 하고 있다고 판단
+            return true;
+    }
+    else
+    {
+        if(mnMatchesInliers<30)
+            return false;
+        else
+            return true;
     }
 }
 
 bool Tracking::NeedNewKeyFrame()
 {
-    // Monocular-Inertial 모드거나 Stereo-Inertial 모드 그리고 Atlas에 Current Map에서 IMU 초기화가 되어있지 않을 때
     if(((mSensor == System::IMU_MONOCULAR) || (mSensor == System::IMU_STEREO)) && !mpAtlas->GetCurrentMap()->isImuInitialized())
     {
-        // Monocular-Inertial 모드이고, 현재 Frame의 Timestamp와 Last KeyFrame의 Timestamp의 차이가 0.25이상일 경우,
-        // Timestamp의 단위는 Unix Time (참고자료 : https://perfectacle.github.io/2018/09/25/unix-timestamp/)
         if (mSensor == System::IMU_MONOCULAR && (mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.25)
-            return true;    // 새로운 KeyFrame이 필요하다고 판단
-        
-        // Stereo-Inertial 모드이고, 현재 Frame의 Timestamp와 Last KeyFrame의 Timestamp의 차이가 0.25이상일 경우,
+            return true;
         else if (mSensor == System::IMU_STEREO && (mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.25)
-            return true;    // 새로운 KeyFrame이 필요하다고 판단
-        
-        else    // Timestamp 차이가 0.25보다 작을 경우
-            return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
+            return true;
+        else
+            return false;
     }
 
-    if(mbOnlyTracking)  // Localization mode로 실행할 경우
-        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
+    if(mbOnlyTracking)
+        return false;
 
     // If Local Mapping is freezed by a Loop Closure do not insert keyframes
-    // Loop Closure 때문에 Local Mapping을 수행하지 않을경우, KeyFrame을 넣지 않는다.
     if(mpLocalMapper->isStopped() || mpLocalMapper->stopRequested())
     {
-        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
+        return false;
     }
 
     // Return false if IMU is initialazing
-    // LocalMapping 포인터를 통해 IMU가 초기화가 진행중일 때
     if (mpLocalMapper->IsInitializing())
-        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
-    
-    // KeyFramesInMap을 통해 Current Map에서 KeyFrame의 갯수를 가져온다.
+        return false;
     const int nKFs = mpAtlas->KeyFramesInMap();
 
     // Do not insert keyframes if not enough frames have passed from last relocalisation
-    // 이전 Relocalization때 충분한 프레임이 전달되지 않은 경우
     if(mCurrentFrame.mnId<mnLastRelocFrameId+mMaxFrames && nKFs>mMaxFrames)
     {
-        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
+        return false;
     }
 
     // Tracked MapPoints in the reference keyframe
-    int nMinObs = 3;    // Observation의 최소값 선언
-
-    if(nKFs<=2) // 예외처리) KeyFrame의 갯수가 2이하 일 때
-        nMinObs=2;  // Observiation의 최소값 변경
-    
-    // Reference Key Frame에서 Map Point가 얼마나 관찰되고 있는지 판단하고 그 Map Point의 갯수를 nRefMatches에 대입
-    // 추후 condition2에서 nRefMatches 변수를 사용
+    int nMinObs = 3;
+    if(nKFs<=2)
+        nMinObs=2;
     int nRefMatches = mpReferenceKF->TrackedMapPoints(nMinObs);
 
     // Local Mapping accept keyframes?
-    // LocalMapper에서 mbAcceptKeyFrames 변수 상태를 반환
-    // mbAcceptKeyFrames 변수는 SetAcceptKeyFrames() 함수를 통해 바뀌는데, 
-    // LocalMapping::Run()함수가 처음 진행될 때 false, 다 끝나면 true
-    // bLocalMappingIdle 변수를 통해 Local Mapping이 진행되고 있는지 아닌지를 판단
     bool bLocalMappingIdle = mpLocalMapper->AcceptKeyFrames();
 
     // Check how many "close" points are being tracked and how many could be potentially created.
-    // Tracking되고 있는 Point들이 얼마나 가까운지 Check
     int nNonTrackedClose = 0;
     int nTrackedClose= 0;
 
-    // Stereo 모드거나, Stereo-Inertial 모드일 때
     if(mSensor!=System::MONOCULAR && mSensor!=System::IMU_MONOCULAR)
     {
-        // Current Frame의 KeyPoint의 갯수를 가져온다.
-        // Fisheye stereo 카메라일 때는 Nleft값을 가져온다. (왼쪽에서 보이는 KeyPoint의 갯수)
         int N = (mCurrentFrame.Nleft == -1) ? mCurrentFrame.N : mCurrentFrame.Nleft;
         for(int i =0; i<N; i++)
         {
-            // mThDepth는 ParseCamParamFile()함수에서 그 값이 정해짐
-            // Key Point 하나의 거리값이 0 이상, Thereshold값 미만일 때
             if(mCurrentFrame.mvDepth[i]>0 && mCurrentFrame.mvDepth[i]<mThDepth)
             {
-                // Map Point가 값이 있고, Outlier가 아닐 때
                 if(mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
-                    nTrackedClose++;    // nTrackedClose 변수 1 중가
-                else    // 그렇지 않다면   
-                    nNonTrackedClose++; // nNonTrackedClsoe 변수 1 증가
+                    nTrackedClose++;
+                else
+                    nNonTrackedClose++;
 
             }
         }
@@ -3163,292 +3081,228 @@ bool Tracking::NeedNewKeyFrame()
 
     bool bNeedToInsertClose;
     bNeedToInsertClose = (nTrackedClose<100) && (nNonTrackedClose>70);
-    // nTrackedClose가 100미만, nNonTrackedClose가 70 초과일때 (Tracked이 되고 있는 Point가 가깝지 않을 때)
 
     // Thresholds
-    // 모드에 따라 Threshold 값을 변경
     float thRefRatio = 0.75f;
-    if(nKFs<2)  // 예외처리) KeyFrame의 갯수가 2이하 일 때
-        thRefRatio = 0.4f;  
+    if(nKFs<2)
+        thRefRatio = 0.4f;
 
-    if(mSensor==System::MONOCULAR)  // Monocular mode 일 때
+    if(mSensor==System::MONOCULAR)
         thRefRatio = 0.9f;
 
-    if(mpCamera2) thRefRatio = 0.75f;   // Stereo Fisheye 카메라 일 때
+    if(mpCamera2) thRefRatio = 0.75f;
 
-    if(mSensor==System::IMU_MONOCULAR)  // Monocular-Inertial mode 일 때
+    if(mSensor==System::IMU_MONOCULAR)
     {
         if(mnMatchesInliers>350) // Points tracked from the local map
-        // mnMatchesInliers는 TrackLocalMap()함수를 통해 값이 바뀜
             thRefRatio = 0.75f;
         else
             thRefRatio = 0.90f;
     }
 
-    // Condition을 구분하는 것은 "ORB-SLAM" 논문 E. New Keyframe Decision 참고
-    // c1a, c1b 동일 c2는 살짝 변형
-
     // Condition 1a: More than "MaxFrames" have passed from last keyframe insertion
-    // Condition 1a: LastKeyFrame Id와 Max Frame(FPS)의 합보다 Current Frame이 더 클 때 (이미지쪽에서 Tracking이 잘 되지 않을 때)
     const bool c1a = mCurrentFrame.mnId>=mnLastKeyFrameId+mMaxFrames;
-
     // Condition 1b: More than "MinFrames" have passed and Local Mapping is idle
-    // Condition 1b: mMinFrames는 0으로 초기화, CurrentFrame ID가 Last KeyFrame ID보다 클 때, 그리고 LocalMapping이 진행 중일때
     const bool c1b = ((mCurrentFrame.mnId>=mnLastKeyFrameId+mMinFrames) && bLocalMappingIdle);
-
-    // Condition 1c: tracking is weak
-    // Condition 1c: Stereo  모드일 때, Tracking이 약한지 판단
-    // TrackLocalMap() 함수를 통해 mnMatchesInliers값을 구하고, Reference Frame에서 관찰되고 있는 Map point 갯수와 비교
-    // bNeedToInsertClose 변수를 통해 Tracking이 제대로 되고 있는지 판단
+    //Condition 1c: tracking is weak
     const bool c1c = mSensor!=System::MONOCULAR && mSensor!=System::IMU_MONOCULAR && mSensor!=System::IMU_STEREO && (mnMatchesInliers<nRefMatches*0.25 || bNeedToInsertClose) ;
-    
     // Condition 2: Few tracked points compared to reference keyframe. Lots of visual odometry compared to map matches.
-    // Condition 2: Referecne Key Frame과 비교했을 때 Tracked point가 적은지 판단, bNeedToInsertClose 변수를 통해 Tracking이 제대로 되고 있는지 판단
     const bool c2 = (((mnMatchesInliers<nRefMatches*thRefRatio || bNeedToInsertClose)) && mnMatchesInliers>15);
 
     // Temporal condition for Inertial cases
-    // IMU를 사용할 때 Case들
     bool c3 = false;
     if(mpLastKeyFrame)
     {
-        if (mSensor==System::IMU_MONOCULAR) // Monocular-Inertial 모드일 때
-        {
-            if ((mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.5) 
-            // CurrentFrame의 Timestamp와 Last KeyFrame의 Timestamp 차이가 0.5 이상일 때
-                c3 = true;
-        }
-        else if (mSensor==System::IMU_STEREO)   // Stereo-Inertial 모드일 때
+        if (mSensor==System::IMU_MONOCULAR)
         {
             if ((mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.5)
-            // CurrentFrame의 Timestamp와 Last KeyFrame의 Timestamp 차이가 0.5 이상일 때
+                c3 = true;
+        }
+        else if (mSensor==System::IMU_STEREO)
+        {
+            if ((mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.5)
                 c3 = true;
         }
     }
 
     bool c4 = false;
-    // TrackLocalMap() 함수를 통해 mnMatchesInliers값을 구하고, 그 값이 15보다 크고, 75보다 작은 경우이거나 상태가 RECENTLY_LOST인 경우
-    // 그리고 Monocular-Inertial mode일 경우
     if ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && ((mSensor == System::IMU_MONOCULAR))) // MODIFICATION_2, originally ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && ((mSensor == System::IMU_MONOCULAR)))
         c4=true;
     else
         c4=false;
 
-    // c1a,c1b,c1c 중 하나라도 true이고, c2가 true인 경우
-    // c3가 true인 경우
-    // c4가 true인 경우
     if(((c1a||c1b||c1c) && c2)||c3 ||c4)
     {
         // If the mapping accepts keyframes, insert keyframe.
         // Otherwise send a signal to interrupt BA
-        // Mapping이 KeyFrame을 허락하면, KeyFrame을 추가로 넣는다.
-        // 그렇지 않으면 BA를 방해
-        if(bLocalMappingIdle)   // LocallMapping이 진행 중인 경우
+        if(bLocalMappingIdle)
         {
-            return true;    // 새로운 KeyFrame이 필요하다고 판단
+            return true;
         }
-        else    // Mapping이 진행 중이지 않을 경우
+        else
         {
-            mpLocalMapper->InterruptBA();   // BA를 방해
-
-            // Stereo 모드, Stereo-Inertial 모드일 경우
+            mpLocalMapper->InterruptBA();
             if(mSensor!=System::MONOCULAR  && mSensor!=System::IMU_MONOCULAR)
             {
-                if(mpLocalMapper->KeyframesInQueue()<3) // LocalMapping 쪽으로 전달된 새로운 Key Frame의 갯수가 3 미만일 경우
-                    return true;  // 새로운 KeyFrame이 필요하다고 판단
-                
-                else    // LocalMapping 쪽으로 전달된 새로운 Key Frame의 갯수가 3 이상일 경우
-                    return false;  // 새로운 KeyFrame이 필요하지 않다고 판단
+                if(mpLocalMapper->KeyframesInQueue()<3)
+                    return true;
+                else
+                    return false;
             }
-
-            // Monocular 모드, Monocular-Inertial 모드일 경우
             else
-                return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
+                return false;
         }
     }
-
-    // 복잡한 조건문을 충족시키지 못한 경우
     else
-        return false;   // 새로운 KeyFrame이 필요하지 않다고 판단
+        return false;
 }
 
 void Tracking::CreateNewKeyFrame()
 {
-    if(mpLocalMapper->IsInitializing()) // Local Mapping에서 초기화가 일어나면 Key Frame을 만들지 않는다.
+    if(mpLocalMapper->IsInitializing())
         return;
 
-    if(!mpLocalMapper->SetNotStop(true)) // Local Mapping이 Stop된 경우 Key Frame을 만들지 않는다.
+    if(!mpLocalMapper->SetNotStop(true))
         return;
 
     KeyFrame* pKF = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
-    // Current Frame, Atlas에서 Current Map, 그리고 BoW를 활용한 KeyFrame DB를 활용하여 KeyFrame을 pointer로 선언
 
-    if(mpAtlas->isImuInitialized()) // Atlas에 IMU가 초기화가 되어있다면
-        pKF->bImu = true;   // KeyFrame의 IMU flag를 true로 선언
+    if(mpAtlas->isImuInitialized())
+        pKF->bImu = true;
 
-    pKF->SetNewBias(mCurrentFrame.mImuBias);    // CurrentFrame의 IMU bias를 활용하여 KeyFrame의 새로운 bias 생성
-    mpReferenceKF = pKF;    // Tracking.h에 있는 Reference Key Frame에 대한 변수를 현재 Key Frame 대입
-    mCurrentFrame.mpReferenceKF = pKF;  // Current Frame의 Reference Key Frame을 현재 Key Frame을 대입
+    pKF->SetNewBias(mCurrentFrame.mImuBias);
+    mpReferenceKF = pKF;
+    mCurrentFrame.mpReferenceKF = pKF;
 
-    if(mpLastKeyFrame)  // Last KeyFrame이 존재한다면
+    if(mpLastKeyFrame)
     {
-        pKF->mPrevKF = mpLastKeyFrame;  // 현재 만든 KeyFrame의 이전 Frame을 Last Key Frame으로 대입
-        mpLastKeyFrame->mNextKF = pKF;  // 이전 Frame의 Next KeyFrame을 KeyFrame으로 대입
-        // 자료구조 중 이중 연결 리스트(doubly linked list) 느낌
+        pKF->mPrevKF = mpLastKeyFrame;
+        mpLastKeyFrame->mNextKF = pKF;
     }
-    else    // Last KeyFrame이 존재하지 않는다면
-        Verbose::PrintMess("No last KF in KF creation!!", Verbose::VERBOSITY_NORMAL);   // 출력
+    else
+        Verbose::PrintMess("No last KF in KF creation!!", Verbose::VERBOSITY_NORMAL);
 
     // Reset preintegration from last KF (Create new object)
-    // Last KeyFrame으로부터 preintegration을 수행
-    // Monocular-Inertial 모드이거나 Stereo-Inertial 모드일 때
     if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO)
     {
         mpImuPreintegratedFromLastKF = new IMU::Preintegrated(pKF->GetImuBias(),pKF->mImuCalib);
-        // KeyFrame의 IMU bias, calibration을 활용
-        // KeyFrame을 활용해서 ImuPreintegrated를 수행하는데 여기서 변수 이름이 Last KeyFrame으로 부터 ImuPreintegrated를 하는 지는 의문
     }
 
-    // Stereo 모드 이거나 Stereo-Inertial 모드인 경우
     if(mSensor!=System::MONOCULAR && mSensor != System::IMU_MONOCULAR) // TODO check if incluide imu_stereo
     {
-        mCurrentFrame.UpdatePoseMatrices(); // Current Frame의 카메라 Pose update
+        mCurrentFrame.UpdatePoseMatrices();
         // cout << "create new MPs" << endl;
         // We sort points by the measured depth by the stereo/RGBD sensor.
         // We create all those MapPoints whose depth < mThDepth.
         // If there are less than 100 close points we create the 100 closest.
-
-        // Stereo / RGBD 센서를 활용해 Depth를 측정 그리고 Sort를 진행
-        // Close point가 100개가 안 될 경우, 100개의 가까운 Map point를 생성
         int maxPoint = 100;
         if(mSensor == System::IMU_STEREO)
             maxPoint = 100;
 
         vector<pair<float,int> > vDepthIdx;
-
-        // Current Frame의 KeyPoint의 갯수를 가져온다.
-        // Fisheye stereo 카메라일 때는 Nleft값을 가져온다. (왼쪽에서 보이는 KeyPoint의 갯수)
         int N = (mCurrentFrame.Nleft != -1) ? mCurrentFrame.Nleft : mCurrentFrame.N;
-
-        vDepthIdx.reserve(mCurrentFrame.N); // Key Point의 갯수만큼 DepthIdx의 크기를 할당
-
-        // Depth값과 Index를 pair를 활용하여 쌍으로 저장
+        vDepthIdx.reserve(mCurrentFrame.N);
         for(int i=0; i<N; i++)
         {
-            float z = mCurrentFrame.mvDepth[i]; // Current Frame에서 Map point의 depth값을 가져온다.
+            float z = mCurrentFrame.mvDepth[i];
             if(z>0)
             {
-                vDepthIdx.push_back(make_pair(z,i));    // vDepthIdx 벡터에 push_back
+                vDepthIdx.push_back(make_pair(z,i));
             }
         }
 
-        // 새로운 KeyFrame에 필요한 정보들을 대입
-        if(!vDepthIdx.empty())  // vDepthIdx가 비어있지 않으면
+        if(!vDepthIdx.empty())
         {
-            sort(vDepthIdx.begin(),vDepthIdx.end());    // Depth를 오름차순으로 정렬
+            sort(vDepthIdx.begin(),vDepthIdx.end());
 
-            int nPoints = 0;    // Point의 갯수를 담을 변수
-
+            int nPoints = 0;
             for(size_t j=0; j<vDepthIdx.size();j++)
             {
-                int i = vDepthIdx[j].second;    // index 값을 i로 가져온다.
+                int i = vDepthIdx[j].second;
 
                 bool bCreateNew = false;
 
-                MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];  // Current Frame에 있는 Map point 하나를 포인터로 선언
-                if(!pMP)    // Map point가 없을 때
+                MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+                if(!pMP)
                     bCreateNew = true;
-                else if(pMP->Observations()<1)  // Map point가 관찰되지 않을 때
+                else if(pMP->Observations()<1)
                 {
                     bCreateNew = true;
-                    mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);   // Map point를 NULL값으로 초기화
+                    mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
                 }
 
-                if(bCreateNew)  // Map point를 만들어야 할 때
+                if(bCreateNew)
                 {
-                    cv::Mat x3D;    // Map point에 대한 3차원 정보를 담을 변수 생성  
+                    cv::Mat x3D;
 
-                    if(mCurrentFrame.Nleft == -1){  // Stereo Fisyeye Camera가 아닐 때
-                        x3D = mCurrentFrame.UnprojectStereo(i); // Unprojection을 이용해서 3차원 정보 획득
+                    if(mCurrentFrame.Nleft == -1){
+                        x3D = mCurrentFrame.UnprojectStereo(i);
                     }
-                    else{   // Stereo Fisheye Camera일 때
-                        x3D = mCurrentFrame.UnprojectStereoFishEye(i);  // Fisheye camera용 Unprojection을 활용해서 3차원 정보 획득
+                    else{
+                        x3D = mCurrentFrame.UnprojectStereoFishEye(i);
                     }
 
                     MapPoint* pNewMP = new MapPoint(x3D,pKF,mpAtlas->GetCurrentMap());
-                    // 위에서 구한 3차원 정보, KeyFrame, Current Map을 활용해서 새로운 Map point 생성
-                    pNewMP->AddObservation(pKF,i);  // KeyFrame에서 Map point가 관찰이 가능하다고 알려준다. (Index를 활용해서 저장)
+                    pNewMP->AddObservation(pKF,i);
 
                     //Check if it is a stereo observation in order to not
                     //duplicate mappoints
-
-                    // Stereo observation인지 아닌지 확인
-                    // Stereo Fisheye Camera일 경우 Left가 아닌 Right에 대해서도 정보를 대입
-                    // mvLeftToRightMatch 변수를 활용, MapPoints의 AddObservation(), AddMapPoint() 함수로 추가
                     if(mCurrentFrame.Nleft != -1 && mCurrentFrame.mvLeftToRightMatch[i] >= 0){
                         mCurrentFrame.mvpMapPoints[mCurrentFrame.Nleft + mCurrentFrame.mvLeftToRightMatch[i]]=pNewMP;
                         pNewMP->AddObservation(pKF,mCurrentFrame.Nleft + mCurrentFrame.mvLeftToRightMatch[i]);
                         pKF->AddMapPoint(pNewMP,mCurrentFrame.Nleft + mCurrentFrame.mvLeftToRightMatch[i]);
                     }
 
-                    pKF->AddMapPoint(pNewMP,i); // KeyFrame에 새로운 map point를 추가
-                    pNewMP->ComputeDistinctiveDescriptors();    // Map point에 대한 ORB matcher Descriptor를 계산
-                    pNewMP->UpdateNormalAndDepth(); // Normal vector와 Depth값을 구함.
-                    mpAtlas->AddMapPoint(pNewMP);   // Atlas map에 Map point를 추가
+                    pKF->AddMapPoint(pNewMP,i);
+                    pNewMP->ComputeDistinctiveDescriptors();
+                    pNewMP->UpdateNormalAndDepth();
+                    mpAtlas->AddMapPoint(pNewMP);
 
-                    mCurrentFrame.mvpMapPoints[i]=pNewMP;   // Current Frame의 Map Point 추가
-                    nPoints++;  // Points 갯수 1증가
+                    mCurrentFrame.mvpMapPoints[i]=pNewMP;
+                    nPoints++;
                 }
-
-                else    // Map point를 만들어도 되지 않을 때
+                else
                 {
-                    nPoints++;  // Points 갯수 1증가
+                    nPoints++;
                 }
 
-                //Depth 값이 Threshold 값을 넘거나, Map point의 총 갯수가 MaxPoint를 넘을 때
                 if(vDepthIdx[j].first>mThDepth && nPoints>maxPoint)
                 {
-                    break;  // for문에 대한 break
+                    break;
                 }
             }
 
-            Verbose::PrintMess("new mps for stereo KF: " + to_string(nPoints), Verbose::VERBOSITY_NORMAL);  // 출력문
+            Verbose::PrintMess("new mps for stereo KF: " + to_string(nPoints), Verbose::VERBOSITY_NORMAL);
 
         }
     }
 
 
-    mpLocalMapper->InsertKeyFrame(pKF); // Local Mapping class에도 KeyFrame 전달
+    mpLocalMapper->InsertKeyFrame(pKF);
 
-    mpLocalMapper->SetNotStop(false);   // Local Mapping을 Stop하지 않도록 변경
+    mpLocalMapper->SetNotStop(false);
 
-    mnLastKeyFrameId = mCurrentFrame.mnId;  // Last KeyFrame ID를 Current Frame의 ID로 대입
-    mpLastKeyFrame = pKF;   // Key Frame을 Last KeyFrame으로 대입
+    mnLastKeyFrameId = mCurrentFrame.mnId;
+    mpLastKeyFrame = pKF;
     //cout  << "end creating new KF" << endl;
 }
 
 void Tracking::SearchLocalPoints()
 {
     // Do not search map points already matched
-    //^ Current frame에서 이미 매칭된 MapPoint들에 대해서, 즉 CurrentFrame의 KeyPoints
     for(vector<MapPoint*>::iterator vit=mCurrentFrame.mvpMapPoints.begin(), vend=mCurrentFrame.mvpMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
         if(pMP)
         {
-            //^ Bad MapPoint -> NULL로
             if(pMP->isBad())
             {
                 *vit = static_cast<MapPoint*>(NULL);
             }
             else
             {
-                //^ For visualization
-                //^ 나중에 GetFoundRatio에서 사용됨. 
-                //^ FoundRatio = Found/Visible, 일정 FoundRatio 밑으로 떨어진 MapPoint는 삭제됨.  
                 pMP->IncreaseVisible();
-                //^ 해당 MapPoint가 마지막으로 보여진 Frame은 CurrentFrame이다.
                 pMP->mnLastFrameSeen = mCurrentFrame.mnId;
-                //^ TrackInView에서 제외
                 pMP->mbTrackInView = false;
                 pMP->mbTrackInViewR = false;
             }
@@ -3458,43 +3312,30 @@ void Tracking::SearchLocalPoints()
     int nToMatch=0;
 
     // Project points in frame and check its visibility
-    //^ 이전에 찾은 LocalMapPoints 중에서
     for(vector<MapPoint*>::iterator vit=mvpLocalMapPoints.begin(), vend=mvpLocalMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
 
-        //^ 이미 Matching 된 LocalMapPoint는 skip한다.
         if(pMP->mnLastFrameSeen == mCurrentFrame.mnId)
             continue;
-        //^ Bad LocalMapPoint는 skip한다.
         if(pMP->isBad())
             continue;
         // Project (this fills MapPoint variables for matching)
-        //^ 그 외의 경우, 
-        //^ LocalMapPoint가 CurrentFrame의 Frustum에 들어오면,
         if(mCurrentFrame.isInFrustum(pMP,0.5))
         {
-            //^ Visible.
             pMP->IncreaseVisible();
-            //^ Match됨.
             nToMatch++;
         }
-        //^ For visualization
-        //^ LocalMapPoint 중에서 CurrentFrame의 Frustnum에 들어온 MapPoint는 ProjectPoints에 저장하여 
-        //^ 나중에 Drawer에서 시각화해준다.
         if(pMP->mbTrackInView)
         {
             mCurrentFrame.mmProjectPoints[pMP->mnId] = cv::Point2f(pMP->mTrackProjX, pMP->mTrackProjY);
         }
     }
 
-    //^ 하나라도 LocalMapPoints 중에서 CurrentFrame의 Frustum에 들어온게 있으면(=Has seen) 된게 있으면,
     if(nToMatch>0)
     {
         ORBmatcher matcher(0.8);
         int th = 1;
-
-        //^ 시스템 환경에 따라 ORB Matcher의 threshold 다름.
         if(mSensor==System::RGBD)
             th=3;
         if(mpAtlas->isImuInitialized())
@@ -3516,10 +3357,6 @@ void Tracking::SearchLocalPoints()
         if(mState==LOST || mState==RECENTLY_LOST) // Lost for less than 1 second
             th=15;
 
-        //^ LocalMapPoints의 descriptor와 CurrentFrame의 KeyPoints의 descriptor 간 matching
-        //^ Match된 KeyPoints 갯수 반환
-        //^ 그러나 쓰이진 않음.
-        //^ CurrentFrame에 Matching된 MapPoint를 저장하는 멤버인 mvpMapPoints에 Match된 KeyPoints 저장하는 함수
         int matches = matcher.SearchByProjection(mCurrentFrame, mvpLocalMapPoints, th, mpLocalMapper->mbFarPoints, mpLocalMapper->mThFarPoints);
     }
 }
@@ -3527,39 +3364,37 @@ void Tracking::SearchLocalPoints()
 void Tracking::UpdateLocalMap()
 {
     // This is for visualization
-    mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);  // Local Map points들을 활용하여 Reference Map point 지정
+    mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
 
-    // Local Key Frames + Local Map Points >>> Local Map
-    UpdateLocalKeyFrames(); // Local KeyFrame update
-    UpdateLocalPoints();    // Local Map points update
+    // Update
+    UpdateLocalKeyFrames();
+    UpdateLocalPoints();
 }
 
 void Tracking::UpdateLocalPoints()
 {
-    mvpLocalMapPoints.clear();  // Map point들이 담겨있는 Vector 초기화
+    mvpLocalMapPoints.clear();
 
-    int count_pts = 0;  // Map Point의 갯수를 count하기 위한 변수
+    int count_pts = 0;
 
-    // Local Key Frame을 reverse로 for문 - 최신 Key Frame부터 check하기 위해서
     for(vector<KeyFrame*>::const_reverse_iterator itKF=mvpLocalKeyFrames.rbegin(), itEndKF=mvpLocalKeyFrames.rend(); itKF!=itEndKF; ++itKF)
     {
         KeyFrame* pKF = *itKF;
-        const vector<MapPoint*> vpMPs = pKF->GetMapPointMatches();  // Match된 Map point들을 이용하여 vpMPs 변수 초기화
+        const vector<MapPoint*> vpMPs = pKF->GetMapPointMatches();
 
-        // 하나의 Key Frame에 있는 Map point들을 for문을 이용하여 하나씩 순회
         for(vector<MapPoint*>::const_iterator itMP=vpMPs.begin(), itEndMP=vpMPs.end(); itMP!=itEndMP; itMP++)
         {
-            MapPoint* pMP = *itMP;
-            if(!pMP)  // Map point가 없다면
-                continue;   // Skip
-            if(pMP->mnTrackReferenceForFrame==mCurrentFrame.mnId)   // Current Frame이 Reference Frame의 ID와 같다면
-                continue;   // Skip
 
-            if(!pMP->isBad())   // Map point의 상태가 좋다면, Reference Frame과 Current Frame이 다르면
+            MapPoint* pMP = *itMP;
+            if(!pMP)
+                continue;
+            if(pMP->mnTrackReferenceForFrame==mCurrentFrame.mnId)
+                continue;
+            if(!pMP->isBad())
             {
-                count_pts++;    // count 변수 증가
-                mvpLocalMapPoints.push_back(pMP);   // Local Map Points 벡터에 추가
-                pMP->mnTrackReferenceForFrame=mCurrentFrame.mnId;   // Current Frame을 Reference Frame으로 update
+                count_pts++;
+                mvpLocalMapPoints.push_back(pMP);
+                pMP->mnTrackReferenceForFrame=mCurrentFrame.mnId;
             }
         }
     }
@@ -3569,57 +3404,51 @@ void Tracking::UpdateLocalPoints()
 void Tracking::UpdateLocalKeyFrames()
 {
     // Each map point vote for the keyframes in which it has been observed
-    map<KeyFrame*,int> keyframeCounter; // <keyFrame, 얼마나 Voting 했는지 count하기 위한 int형> 으로 map 자료구조를 활용하여 변수 선언
-
-    // Atlas에 IMU가 초기화 되어 있지 않거나, 현재 Current Frame의 ID보다 마지막 Relocalization Frame의 ID +2가 더 클 경우
+    map<KeyFrame*,int> keyframeCounter;
     if(!mpAtlas->isImuInitialized() || (mCurrentFrame.mnId<mnLastRelocFrameId+2))
     {
-        for(int i=0; i<mCurrentFrame.N; i++)    // Current Frame의 Key point를 for문으로 순회
+        for(int i=0; i<mCurrentFrame.N; i++)
         {
-            MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];  // Current Frame의 Map point 하나를 pointer로 선언
+            MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
             if(pMP)
             {
-                if(!pMP->isBad())   // Map point가 Good point라면
+                if(!pMP->isBad())
                 {
                     const map<KeyFrame*,tuple<int,int>> observations = pMP->GetObservations();
-                    // Current Frame의 Map point를 관찰하고 있는 여러 Keyframe을 observation 변수를 이용하여 저장
-                    // observations에는 현재 Map point를 보고 있는 Keyframe에 대한 index 정보들을 가지고 있다.  
                     for(map<KeyFrame*,tuple<int,int>>::const_iterator it=observations.begin(), itend=observations.end(); it!=itend; it++)
-                        keyframeCounter[it->first]++;   // Voting을 진행 - for문을 통해서 map point를 보고 있는 Key frame -> 가장 많이 겹쳐져 있는 key frame 선별
+                        keyframeCounter[it->first]++;
                 }
-                else    // Map point가 Bad point라면
+                else
                 {
-                    mCurrentFrame.mvpMapPoints[i]=NULL; // NULL 값으로 초기화
+                    mCurrentFrame.mvpMapPoints[i]=NULL;
                 }
             }
         }
     }
-    else    // Atlas에 IMU 초기화 되어 있거나, Current Frame의 ID보다 Relocalization Frame의 ID +2가 더 작을 경우
+    else
     {
-        for(int i=0; i<mLastFrame.N; i++)   // Last Frame의 Key point를 for문으로 순회
+        for(int i=0; i<mLastFrame.N; i++)
         {
             // Using lastframe since current frame has not matches yet
-            // Current Frame이 match가 일어나지 않았기 때문에 Last Frame을 사용합니다.
             if(mLastFrame.mvpMapPoints[i])
             {
-                MapPoint* pMP = mLastFrame.mvpMapPoints[i]; // Last Frame의 Map point 하나를 pointer로 선언
-                if(!pMP)    // Map point가 없다면
-                    continue;   // Skip
-                if(!pMP->isBad())   // Map point가 Good point라면
+                MapPoint* pMP = mLastFrame.mvpMapPoints[i];
+                if(!pMP)
+                    continue;
+                if(!pMP->isBad())
                 {
                     const map<KeyFrame*,tuple<int,int>> observations = pMP->GetObservations();
-                    // Last Frame의 Map point를 관찰하고 있는 여러 Keyframe을 observation 변수를 이용하여 저장
-                    // observations에는 현재 Map point를 보고 있는 Keyframe에 대한 index 정보들을 가지고 있다. 
                     for(map<KeyFrame*,tuple<int,int>>::const_iterator it=observations.begin(), itend=observations.end(); it!=itend; it++)
-                        keyframeCounter[it->first]++;   // Voting을 진행 - for문을 통해서 map point를 보고 있는 Key frame -> 가장 많이 겹쳐져 있는 key frame 선별
+                        keyframeCounter[it->first]++;
                 }
-                else    // Map point가 Bad point라면
+                else
                 {
-                    mLastFrame.mvpMapPoints[i]=NULL;    // NULL 값으로 초기화
+                    mLastFrame.mvpMapPoints[i]=NULL;
                 }
             }
         }
     }
+
 
     int max=0;
     KeyFrame* pKFmax= static_cast<KeyFrame*>(NULL);
@@ -3630,103 +3459,96 @@ void Tracking::UpdateLocalKeyFrames()
     // All keyframes that observe a map point are included in the local map. Also check which keyframe shares most points
     for(map<KeyFrame*,int>::const_iterator it=keyframeCounter.begin(), itEnd=keyframeCounter.end(); it!=itEnd; it++)
     {
-        KeyFrame* pKF = it->first;  // Key Frame을 pointer 변수를 활용하여 지정
+        KeyFrame* pKF = it->first;
 
-        if(pKF->isBad())    // Bad Key Frame일 경우 
-            continue;   // Skip
+        if(pKF->isBad())
+            continue;
 
-        if(it->second>max)  // 최대로 Voting이 일어난 Key Frame 업데이트
+        if(it->second>max)
         {
             max=it->second;
             pKFmax=pKF;
         }
 
-        mvpLocalKeyFrames.push_back(pKF);   // Key Frame을 Local Key Frame Vector에 담는다.  
-        pKF->mnTrackReferenceForFrame = mCurrentFrame.mnId; // 
+        mvpLocalKeyFrames.push_back(pKF);
+        pKF->mnTrackReferenceForFrame = mCurrentFrame.mnId;
     }
 
     // Include also some not-already-included keyframes that are neighbors to already-included keyframes
-    // Local Key Frame의 for문을 돌면서 인접한 포함되어 있지 않은 key frame을 포함시킨다.
     for(vector<KeyFrame*>::const_iterator itKF=mvpLocalKeyFrames.begin(), itEndKF=mvpLocalKeyFrames.end(); itKF!=itEndKF; itKF++)
     {
         // Limit the number of keyframes
-        if(mvpLocalKeyFrames.size()>80) // Key Frame Vector의 Size가 80이 넘는다면
-            break;  // for문을 빠져 나온다.
+        if(mvpLocalKeyFrames.size()>80)
+            break;
 
         KeyFrame* pKF = *itKF;
 
-        const vector<KeyFrame*> vNeighs = pKF->GetBestCovisibilityKeyFrames(10);    // N은 size, 가장 좋은 Covisibility를 가지고 있는 keyframe
+        const vector<KeyFrame*> vNeighs = pKF->GetBestCovisibilityKeyFrames(10);
 
-        // for문을 이용하여 좋은 Covisibility를 가지고 있는 KeyFrame 순회
+
         for(vector<KeyFrame*>::const_iterator itNeighKF=vNeighs.begin(), itEndNeighKF=vNeighs.end(); itNeighKF!=itEndNeighKF; itNeighKF++)
         {
             KeyFrame* pNeighKF = *itNeighKF;
-            if(!pNeighKF->isBad())  // 좋은 Key Frame이라면
+            if(!pNeighKF->isBad())
             {
                 if(pNeighKF->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
-                // 인접한 Key frame의 Reference Frame의 ID를 현재 current frame의 ID와 같지 않다면
                 {
-                    mvpLocalKeyFrames.push_back(pNeighKF);  // 인접한 Key frame도 Local key frame으로 집어넣기
-                    pNeighKF->mnTrackReferenceForFrame=mCurrentFrame.mnId;  // 인접한 Key Frame의 Reference Frame을 Current Frame의 ID로 대입
-                    break;  // 인접한 Key Frame 순회 break;
+                    mvpLocalKeyFrames.push_back(pNeighKF);
+                    pNeighKF->mnTrackReferenceForFrame=mCurrentFrame.mnId;
+                    break;
                 }
             }
         }
 
-        const set<KeyFrame*> spChilds = pKF->GetChilds();   // Covisibility Graph 중 자식 노드에 해당하는 Key Frame 집합을 가져온다.
-        // for문을 이용하여 좋은 Covisibility를 가지고 있는 자식 노드 KeyFrame 순회
+        const set<KeyFrame*> spChilds = pKF->GetChilds();
         for(set<KeyFrame*>::const_iterator sit=spChilds.begin(), send=spChilds.end(); sit!=send; sit++)
         {
             KeyFrame* pChildKF = *sit;
-            if(!pChildKF->isBad())  // 좋은 Key Frame이라면
+            if(!pChildKF->isBad())
             {
                 if(pChildKF->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
-                // 자식 노드 Key frame의 Reference Frame의 ID를 현재 current frame의 ID와 같지 않다면
                 {
-                    mvpLocalKeyFrames.push_back(pChildKF);  // 자식 노드 Key frame도 Local key frame으로 집어넣기
-                    pChildKF->mnTrackReferenceForFrame=mCurrentFrame.mnId;  // 자식 노드 Key Frame의 Reference Frame을 Current Frame의 ID로 대입
-                    break;  // 자식 노드 Key Frame 순회 break;
+                    mvpLocalKeyFrames.push_back(pChildKF);
+                    pChildKF->mnTrackReferenceForFrame=mCurrentFrame.mnId;
+                    break;
                 }
             }
         }
 
-        KeyFrame* pParent = pKF->GetParent();    // Covisibility Graph 중 부모 노드에 해당하는 Key Frame 집합을 가져온다.
-        if(pParent) // 부모 노드 Key Frame이 존재한다면
+        KeyFrame* pParent = pKF->GetParent();
+        if(pParent)
         {
             if(pParent->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
-            // 부모 노드 Key frame의 Reference Frame의 ID를 현재 current frame의 ID와 같지 않다면
             {
-                mvpLocalKeyFrames.push_back(pParent);   // 부모 노드 Key frame도 Local key frame으로 집어넣기
-                pParent->mnTrackReferenceForFrame=mCurrentFrame.mnId;   // 부모 노드 Key Frame의 Reference Frame을 Current Frame의 ID로 대입
-                break;  // for문을 빠져 나온다.
+                mvpLocalKeyFrames.push_back(pParent);
+                pParent->mnTrackReferenceForFrame=mCurrentFrame.mnId;
+                break;
             }
         }
     }
 
     // Add 10 last temporal KFs (mainly for IMU)
-    // IMU모드일 때 임시적인 key frame을 update
     if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO) &&mvpLocalKeyFrames.size()<80)
     {
-        KeyFrame* tempKeyFrame = mCurrentFrame.mpLastKeyFrame;  // Current Frame에서 Last Key Frame을 임시 Key Frame으로 저장
+        KeyFrame* tempKeyFrame = mCurrentFrame.mpLastKeyFrame;
 
         const int Nd = 20;
         for(int i=0; i<Nd; i++){
             if (!tempKeyFrame)
                 break;
             if(tempKeyFrame->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
-            // 임시 노드 Key frame의 Reference Frame의 ID를 현재 current frame의 ID와 같지 않다면
             {
-                mvpLocalKeyFrames.push_back(tempKeyFrame);  // 임시 노드 Key frame도 Local key frame으로 집어넣기
-                tempKeyFrame->mnTrackReferenceForFrame=mCurrentFrame.mnId;  // 임시 노드 Key Frame의 Reference Frame을 Current Frame의 ID로 대입
-                tempKeyFrame=tempKeyFrame->mPrevKF; // 순회를 위해 Temp Key Frame의 이전 Key Frame을 대입
+                mvpLocalKeyFrames.push_back(tempKeyFrame);
+                tempKeyFrame->mnTrackReferenceForFrame=mCurrentFrame.mnId;
+                tempKeyFrame=tempKeyFrame->mPrevKF;
             }
         }
     }
 
-    if(pKFmax)  // voting을 통해 선별된 가장 좋은 Key frame
+    if(pKFmax)
     {
-        mpReferenceKF = pKFmax; // Reference Key Frame으로 대입
-        mCurrentFrame.mpReferenceKF = mpReferenceKF;    // Current Frame의 Reference Key Frame으로 대입
+        mpReferenceKF = pKFmax;
+        mCurrentFrame.mpReferenceKF = mpReferenceKF;
     }
 }
 
@@ -3734,17 +3556,12 @@ bool Tracking::Relocalization()
 {
     Verbose::PrintMess("Starting relocalization", Verbose::VERBOSITY_NORMAL);
     // Compute Bag of Words Vector
-    //^ CurrentFrame이 가지고 있는 ORB descriptor로부터,
-    //^ BoW vector와 Feature vector를 계산하여 CurrentFrame의 멤버(mBowVec, mFeatVec)에 update한다.
     mCurrentFrame.ComputeBoW();
 
     // Relocalization is performed when tracking is lost
     // Track Lost: Query KeyFrame Database for keyframe candidates for relocalisation
-    //^ Atlas에 있는 CurrentMap으로 부터 CurrentFrame의 BoW를 공유하는 KeyFrame들 중에서,
-    //^ similarity score가 75% 이상인 KeyFrame들을 Relocalization 후보 Keyframe으로 뽑는다. 
     vector<KeyFrame*> vpCandidateKFs = mpKeyFrameDB->DetectRelocalizationCandidates(&mCurrentFrame, mpAtlas->GetCurrentMap());
 
-    //^ 후보 KeyFrame이 없으면 Relocalization fail.
     if(vpCandidateKFs.empty()) {
         Verbose::PrintMess("There are not candidates", Verbose::VERBOSITY_NORMAL);
         return false;
@@ -3759,7 +3576,6 @@ bool Tracking::Relocalization()
     vector<MLPnPsolver*> vpMLPnPsolvers;
     vpMLPnPsolvers.resize(nKFs);
 
-    
     vector<vector<MapPoint*> > vvpMapPointMatches;
     vvpMapPointMatches.resize(nKFs);
 
@@ -3768,61 +3584,38 @@ bool Tracking::Relocalization()
 
     int nCandidates=0;
 
-    //^ 전체 후보 KeyFrame에 대해서,
     for(int i=0; i<nKFs; i++)
     {
         KeyFrame* pKF = vpCandidateKFs[i];
-        //^ KeyFrame이 Bad면 discard
-        //^ Bad의 의미 : 버려지는 KeyFrame, 어디선가 erase되어 메모리 해제를 기다리는 KeyFrame
         if(pKF->isBad())
             vbDiscarded[i] = true;
         else
         {
-            //^ 후보 KeyFrame의 descriptor와 CurrentFrame의 descriptor 간 matching
-            //^ vvpMapPointMatches에는 matching된 MapPoint가 담김.
             int nmatches = matcher.SearchByBoW(pKF,mCurrentFrame,vvpMapPointMatches[i]);
-            
-            //^ match된 MapPoint가 적으면 discard
             if(nmatches<15)
             {
                 vbDiscarded[i] = true;
                 continue;
             }
-            //^ match된 MapPoint가 충분하면,
             else
             {
-                //^ Solve PnP
-                //^ Camera의 intrinsic parameter,
-                //^ World coordinate 상의 3차원 Points,
-                //^ Image(Frame) 상의 2차원 Points
-                //^ 를 알고 있을 때 Camera pose를 예측하는 solver
-                //^ MLPnP : Maximum Likelihood solution to the Perspective-n-Point
                 MLPnPsolver* pSolver = new MLPnPsolver(mCurrentFrame,vvpMapPointMatches[i]);
                 pSolver->SetRansacParameters(0.99,10,300,6,0.5,5.991);  //This solver needs at least 6 points
-                //^ PnPsolver 객체를 현재 KeyFrame index에 저장
                 vpMLPnPsolvers[i] = pSolver;
                 nCandidates++;
             }
         }
     }
-    //^ Vector 상세 설명
-    //^ 후보 KeyFrame (vpCandidateKFs)          : [a, b, c, d, e, f ...] 
-    //^ Discarded KeyFrame (vbDiscarded)        : [1, 1, 0, 1, 0, 0 ...], 0: FALSE, 1: TRUE
-    //^ MLPnPSovler 객체 (vpMLPnPsolvers)       : [-, -, S, -, S, S ...], -: NULL, S: 객체
-    //^ Match된 MapPoint (vvpMapPointMatches)   : [-, -, M, -, M, M ... ], -: NULL, M: Match된 MapPoints vector(KF의 MapPoints)  
 
     // Alternatively perform some iterations of P4P RANSAC
     // Until we found a camera pose supported by enough inliers
     bool bMatch = false;
     ORBmatcher matcher2(0.9,true);
 
-    //^ 후보 MLPnPsolver가 없거나 Match될 때까지,
     while(nCandidates>0 && !bMatch)
     {
-        //^ 후보 KeyFrame들에 대해서,
         for(int i=0; i<nKFs; i++)
         {
-            //^ Discarded KeyFrame은 skip
             if(vbDiscarded[i])
                 continue;
 
@@ -3831,13 +3624,9 @@ bool Tracking::Relocalization()
             int nInliers;
             bool bNoMore;
 
-            //^ Match된 MapPoint들(vvpMapPointMatches)에 대해서
-            //^ 5 iterate RANSAC 수행
-            //^ Tcw : RANSAC을 통해 나온 Camera pose
             MLPnPsolver* pSolver = vpMLPnPsolvers[i];
             cv::Mat Tcw = pSolver->iterate(5,bNoMore,vbInliers,nInliers);
 
-            //^ RANSAC Fail (1. over iteration, 2. MapPoints가 6개보다 작을 때)
             // If Ransac reachs max. iterations discard keyframe
             if(bNoMore)
             {
@@ -3845,62 +3634,44 @@ bool Tracking::Relocalization()
                 nCandidates--;
             }
 
-            //^ RANSAC 성공
             // If a Camera Pose is computed, optimize
             if(!Tcw.empty())
             {
-                //^ RANSAC 결과 Camera Pose를 CurrentFrame의 pose로 copy
                 Tcw.copyTo(mCurrentFrame.mTcw);
 
-                set<MapPoint*> sFound; 
+                set<MapPoint*> sFound;
 
                 const int np = vbInliers.size();
 
-                //^ RANSAC inlier들에 대해서,
                 for(int j=0; j<np; j++)
                 {
-                    //^ Inlier 이면,
                     if(vbInliers[j])
                     {
-                        //^ 해당 index의 MapPoint는 CurrentFrame에서 match된 MapPoint.
                         mCurrentFrame.mvpMapPoints[j]=vvpMapPointMatches[i][j];
-                        //^ sFound(std::set) : Match된 MapPoint들 중에서 RANSAC의 inlier는 Found로 간주(중복 없음) 
                         sFound.insert(vvpMapPointMatches[i][j]);
                     }
-                    //^ Inlier가 아니면,
                     else
-                        //^ 해당 index의 MapPoint는 CurrentFrame에서 NULL
                         mCurrentFrame.mvpMapPoints[j]=NULL;
                 }
-                
-                //^ Match된 MapPoint들로 graph를 이루고 graph optimization을 통해 camera pose를 구함.
-                //^ nGood : nInitialCorrespondences-nBad
-                //^ -> Initial vertex 갯수(nInitialCorrespondences)에서 optimization 결과 outlier(nBad)로 판명난 vertex 갯수를 뺀 값
+
                 int nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
-                //^ nGood이 너무 적으면 다음 KeyFrame으로
                 if(nGood<10)
                     continue;
 
-                //^ Outlier로 판명난 KeyPoint들은 set NULL.
                 for(int io =0; io<mCurrentFrame.N; io++)
                     if(mCurrentFrame.mvbOutlier[io])
                         mCurrentFrame.mvpMapPoints[io]=static_cast<MapPoint*>(NULL);
 
-                //^ nGood이 아쉬우면 한번 더
                 // If few inliers, search by projection in a coarse window and optimize again
                 if(nGood<50)
                 {
-                    //^ ORB matcher의 parameter 조금더 느슨하게 해서 match되는 MapPoint 추가로 찾음
                     int nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,10,100);
 
-                    //^ 추가로 match된 MapPoint와 nGood이 50이 넘으면,
                     if(nadditional+nGood>=50)
                     {
-                        //^ 한번 더 optimize
                         nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
-                        //^ 한번 더..
                         // If many inliers but still not enough, search by projection again in a narrower window
                         // the camera has been already optimized with many points
                         if(nGood>30 && nGood<50)
@@ -3909,10 +3680,8 @@ bool Tracking::Relocalization()
                             for(int ip =0; ip<mCurrentFrame.N; ip++)
                                 if(mCurrentFrame.mvpMapPoints[ip])
                                     sFound.insert(mCurrentFrame.mvpMapPoints[ip]);
-                            //^ 이번엔 parameter 빡세게(이미 많은 points들이 optimized 되었기 때문)
                             nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,3,64);
 
-                            //^ 진짜 마지막..
                             // Final optimization
                             if(nGood+nadditional>=50)
                             {
@@ -3926,80 +3695,78 @@ bool Tracking::Relocalization()
                     }
                 }
 
-                //^ Good match
+
                 // If the pose is supported by enough inliers stop ransacs and continue
                 if(nGood>=50)
                 {
                     bMatch = true;
-                    //^ 다른 후보 KeyFrame 볼 것도 없이 break (이 정도면 relocalization 성공)
                     break;
                 }
             }
         }
     }
 
-    //^ Good match가 없음.
     if(!bMatch)
     {
         return false;
     }
-    //^ Relocalization 성공!
     else
     {
         mnLastRelocFrameId = mCurrentFrame.mnId;
         cout << "Relocalized!!" << endl;
         return true;
     }
+
 }
 
 void Tracking::Reset(bool bLocMap)
 {
     Verbose::PrintMess("System Reseting", Verbose::VERBOSITY_NORMAL);
 
-    if(mpViewer) //mpViewer가 실해되고있을때 실행됩니다. 
+    if(mpViewer)
     {
-        mpViewer->RequestStop(); //mpViewer를 중단합니다. 
-        while(!mpViewer->isStopped()) //mpViewer가 중단됬는지 확인합니다. 
+        mpViewer->RequestStop();
+        while(!mpViewer->isStopped())
             usleep(3000);
     }
 
     // Reset Local Mapping
-    if (!bLocMap) //reset value인 blocalmap이 fasle일때 작동합니다. --> reset이 안됬을때
+    if (!bLocMap)
     {
         Verbose::PrintMess("Reseting Local Mapper...", Verbose::VERBOSITY_NORMAL);
-        mpLocalMapper->RequestReset(); //LocalMapper를 reset합니다. 
+        mpLocalMapper->RequestReset();
         Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL);
     }
 
 
     // Reset Loop Closing
     Verbose::PrintMess("Reseting Loop Closing...", Verbose::VERBOSITY_NORMAL);
-    mpLoopClosing->RequestReset(); //loop closing도 마찬가지로 reset함수를 실행합니다. 
+    mpLoopClosing->RequestReset();
     Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL);
 
     // Clear BoW Database
     Verbose::PrintMess("Reseting Database...", Verbose::VERBOSITY_NORMAL);
-    mpKeyFrameDB->clear(); //저장되어있던 keyframe의 database를 reset합니다.
+    mpKeyFrameDB->clear();
     Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL);
 
     // Clear Map (this erase MapPoints and KeyFrames)
-    mpAtlas->clearAtlas(); //atlas data를 reset합니다. 
-    mpAtlas->CreateNewMap(); //atlas의 maps를 reset합니다. 
-    if (mSensor==System::IMU_STEREO || mSensor == System::IMU_MONOCULAR) //imu 센서가 사용됬을 경우 실행됩니다. 
-        mpAtlas->SetInertialSensor(); //imu 센서를 reset합니다. 
-    mnInitialFrameId = 0; //imu-frame id를 0으로 초기화합니다. 
+    mpAtlas->clearAtlas();
+    mpAtlas->CreateNewMap();
+    if (mSensor==System::IMU_STEREO || mSensor == System::IMU_MONOCULAR)
+        mpAtlas->SetInertialSensor();
+    mnInitialFrameId = 0;
 
-    KeyFrame::nNextId = 0; //keyframe의 next id를 0으로 초기화합니다. 
-    Frame::nNextId = 0; //frame의 next id를 0으로 초기화합니다. 
-    mState = NO_IMAGES_YET; //state를 초기화합니다. 
+    KeyFrame::nNextId = 0;
+    Frame::nNextId = 0;
+    mState = NO_IMAGES_YET;
 
-    if(mpInitializer) //monocular initializer부분 입니다. 
+    if(mpInitializer)
     {
         delete mpInitializer;
         mpInitializer = static_cast<Initializer*>(NULL);
     }
     mbSetInit=false;
-/////////////////////////////frame 관련 모든 parameter 및 list를 초기화 합니다. ///////////////////////////////////
+
     mlRelativeFramePoses.clear();
     mlpReferences.clear();
     mlFrameTimes.clear();
@@ -4010,19 +3777,15 @@ void Tracking::Reset(bool bLocMap)
     mpReferenceKF = static_cast<KeyFrame*>(NULL);
     mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
     mvIniMatches.clear();
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     if(mpViewer)
-        mpViewer->Release(); //viewer를 standby 상태로 만듭니다. 
+        mpViewer->Release();
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }
 
 void Tracking::ResetActiveMap(bool bLocMap)
 {
-    // Tracking::Reset(bool bLocMap) 코드와 거의 동일
-    // 다만 현재 Map에 대해서만 Reset을 진행  
-
     Verbose::PrintMess("Active map Reseting", Verbose::VERBOSITY_NORMAL);
     if(mpViewer)
     {
@@ -4116,8 +3879,6 @@ vector<MapPoint*> Tracking::GetLocalMapMPS()
 
 void Tracking::ChangeCalibration(const string &strSettingPath)
 {
-    // Intrinsic parameter에 대한 내용을 활용하여 변수에 update
-
     cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
     float fx = fSettings["Camera.fx"];
     float fy = fSettings["Camera.fy"];
@@ -4156,67 +3917,67 @@ void Tracking::InformOnlyTracking(const bool &flag)
 
 void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurrentKeyFrame)
 {
-   Map * pMap = pCurrentKeyFrame->GetMap(); //current keyframe에서 mpMap을 가져옵니다. 
-    unsigned int index = mnFirstFrameId; //index값을 최초 frame id로 초기화합니다. 
-    list<ORB_SLAM3::KeyFrame*>::iterator lRit = mlpReferences.begin(); //referance keyframe의 각 변수들을 begin함수를 통해 iterator로 가져옵니다.  
-    list<bool>::iterator lbL = mlbLost.begin(); 
+    Map * pMap = pCurrentKeyFrame->GetMap();
+    unsigned int index = mnFirstFrameId;
+    list<ORB_SLAM3::KeyFrame*>::iterator lRit = mlpReferences.begin();
+    list<bool>::iterator lbL = mlbLost.begin();
     for(list<cv::Mat>::iterator lit=mlRelativeFramePoses.begin(),lend=mlRelativeFramePoses.end();lit!=lend;lit++, lRit++, lbL++)
     {
         if(*lbL)
-            continue; //interator의 begin 값이 있으면 시작합니다. 
+            continue;
 
-        KeyFrame* pKF = *lRit; //pKF을 mlpReferences.begin()로 선언합니다. 
+        KeyFrame* pKF = *lRit;
 
-        while(pKF->isBad()) //pKF가 안좋은 상태이면 
+        while(pKF->isBad())
         {
-            pKF = pKF->GetParent(); //parent node의 값을 가져옵니다. 
+            pKF = pKF->GetParent();
         }
 
-        if(pKF->GetMap() == pMap) //Key frame의 map이 pMap과 동일할때 실행합니다. 즉 current frame에서 가져온 map과 동일할때 입니다. 
+        if(pKF->GetMap() == pMap)
         {
-            (*lit).rowRange(0,3).col(3)=(*lit).rowRange(0,3).col(3)*s; //동일한 값을 저장합니다. s는 1일때만 연산이 됩니다. 
+            (*lit).rowRange(0,3).col(3)=(*lit).rowRange(0,3).col(3)*s;
         }
     }
 
-    mLastBias = b; //lastbias값을 가져옵니다. 
+    mLastBias = b;
 
-    mpLastKeyFrame = pCurrentKeyFrame; //current key frame을 last key frame으로 가져옵니다. 
+    mpLastKeyFrame = pCurrentKeyFrame;
 
-    mLastFrame.SetNewBias(mLastBias); //입력된 bias 값을 lasframe의 newbias로 저장합니다. 
-    mCurrentFrame.SetNewBias(mLastBias); // 입력된 bias 값을 current frame의 newbias로 저장합니다. 
+    mLastFrame.SetNewBias(mLastBias);
+    mCurrentFrame.SetNewBias(mLastBias);
 
-    cv::Mat Gz = (cv::Mat_<float>(3,1) << 0, 0, -IMU::GRAVITY_VALUE); // gravity 값 선언입니다. 
+    cv::Mat Gz = (cv::Mat_<float>(3,1) << 0, 0, -IMU::GRAVITY_VALUE);
 
-    cv::Mat twb1; //연산에 사용될 matrix들을 선언합니다. 
+    cv::Mat twb1;
     cv::Mat Rwb1;
     cv::Mat Vwb1;
     float t12;
 
-    while(!mCurrentFrame.imuIsPreintegrated()) //imu값이 preintegrated 되었을때 실행하도록 합니다. 
+    while(!mCurrentFrame.imuIsPreintegrated())
     {
         usleep(500);
     }
 
 
-    if(mLastFrame.mnId == mLastFrame.mpLastKeyFrame->mnFrameId) //마지막 frame이 last key frame과 동일할때 실행합니다. --> 움직임이 없었다라고 판단됩니다. 
+    if(mLastFrame.mnId == mLastFrame.mpLastKeyFrame->mnFrameId)
     {
-        mLastFrame.SetImuPoseVelocity(mLastFrame.mpLastKeyFrame->GetImuRotation(), // imu값을 그대로 가져옵니다. 
+        mLastFrame.SetImuPoseVelocity(mLastFrame.mpLastKeyFrame->GetImuRotation(),
                                       mLastFrame.mpLastKeyFrame->GetImuPosition(),
                                       mLastFrame.mpLastKeyFrame->GetVelocity());
     }
     else
     {
-        twb1 = mLastFrame.mpLastKeyFrame->GetImuPosition(); //연산에 사용될 matrix값들에 last key frame의 imu값들을 가져옵니다. 
+        twb1 = mLastFrame.mpLastKeyFrame->GetImuPosition();
         Rwb1 = mLastFrame.mpLastKeyFrame->GetImuRotation();
         Vwb1 = mLastFrame.mpLastKeyFrame->GetVelocity();
         t12 = mLastFrame.mpImuPreintegrated->dT;
 
-        mLastFrame.SetImuPoseVelocity(Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaRotation(),                                     //last key frame에서 가져왔던 imu데이터들에다가 last frame에서 
-                                      twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaPosition(),  //가져온 delta imu값들을 연산 해서 최종 pose 및 velocity들을 lastframe에 저장합니다. 
+        mLastFrame.SetImuPoseVelocity(Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaRotation(),
+                                      twb1 + Vwb1*t12 + 0.5f*t12*t12*Gz+ Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaPosition(),
                                       Vwb1 + Gz*t12 + Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaVelocity());
     }
 
-    if (mCurrentFrame.mpImuPreintegrated) //current frame 차례입니다.
+    if (mCurrentFrame.mpImuPreintegrated)
     {
         twb1 = mCurrentFrame.mpLastKeyFrame->GetImuPosition();
         Rwb1 = mCurrentFrame.mpLastKeyFrame->GetImuRotation();
@@ -4228,40 +3989,40 @@ void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurr
                                       Vwb1 + Gz*t12 + Rwb1*mCurrentFrame.mpImuPreintegrated->GetUpdatedDeltaVelocity());
     }
 
-    mnFirstImuFrameId = mCurrentFrame.mnId; //first imu frame id를 갱신합니다.
+    mnFirstImuFrameId = mCurrentFrame.mnId;
 }
 
 
 cv::Mat Tracking::ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2)
 {
-    cv::Mat R1w = pKF1->GetRotation(); //key frame1 의 rotation값을 가져옵니다. 
-    cv::Mat t1w = pKF1->GetTranslation(); //key frame1 의 translation값을 가져옵니다. 
-    cv::Mat R2w = pKF2->GetRotation(); //key frame2 의 rotation값을 가져옵니다. 
-    cv::Mat t2w = pKF2->GetTranslation(); //key frame2 의 translation값을 가져옵니다. 
+    cv::Mat R1w = pKF1->GetRotation();
+    cv::Mat t1w = pKF1->GetTranslation();
+    cv::Mat R2w = pKF2->GetRotation();
+    cv::Mat t2w = pKF2->GetTranslation();
 
-    cv::Mat R12 = R1w*R2w.t(); //R12를 선언합니다. 해당 matrix는 keyframe1과 keyframe2의 rotation 연산입니다. 결국 delta rotation을 구합니다. 
-    cv::Mat t12 = -R1w*R2w.t()*t2w+t1w; //t12를 선언합니다. delta rotation에서 t2w를 연산하고 해당 translation을 t1w에 빼줍니다. 결국 delta translation을 구합니다. 
+    cv::Mat R12 = R1w*R2w.t();
+    cv::Mat t12 = -R1w*R2w.t()*t2w+t1w;
 
-    cv::Mat t12x = Converter::tocvSkewMatrix(t12); //InverseRightJacobianSO3 을 위한 t12x를 구합니다. 
+    cv::Mat t12x = Converter::tocvSkewMatrix(t12);
 
-    const cv::Mat &K1 = pKF1->mK; //keyframe1의 k parameter를 가져옵니다. mK는 camera parameter를 의미합니다.
-    const cv::Mat &K2 = pKF2->mK; //keyframe2의 k parameter를 가져옵니다. 
+    const cv::Mat &K1 = pKF1->mK;
+    const cv::Mat &K2 = pKF2->mK;
 
 
-    return K1.t().inv()*t12x*R12*K2.inv(); //key frame1의 inverse matrix와 t12x r12 그리고 k2 matrix의 inverse를 연산합니다. 왜 inverse를 하지?
+    return K1.t().inv()*t12x*R12*K2.inv();
 }
 
 
 void Tracking::CreateNewMapPoints()
 {
     // Retrieve neighbor keyframes in covisibility graph
-    const vector<KeyFrame*> vpKFs = mpAtlas->GetAllKeyFrames();
+    const vector<KeyFrame*> vpKFs = mpAtlas->GetAllKeyFrames();     // 해당 map의 모든 keyframe을 가져옴
 
     ORBmatcher matcher(0.6,false);
 
-    cv::Mat Rcw1 = mpLastKeyFrame->GetRotation();
-    cv::Mat Rwc1 = Rcw1.t();
-    cv::Mat tcw1 = mpLastKeyFrame->GetTranslation();
+    cv::Mat Rcw1 = mpLastKeyFrame->GetRotation();       // 3*3
+    cv::Mat Rwc1 = Rcw1.t();        // transpose
+    cv::Mat tcw1 = mpLastKeyFrame->GetTranslation();        // 3*1
     cv::Mat Tcw1(3,4,CV_32F);
     Rcw1.copyTo(Tcw1.colRange(0,3));
     tcw1.copyTo(Tcw1.col(3));
@@ -4282,12 +4043,12 @@ void Tracking::CreateNewMapPoints()
     for(size_t i=0; i<vpKFs.size(); i++)
     {
         KeyFrame* pKF2 = vpKFs[i];
-        if(pKF2==mpLastKeyFrame)
+        if(pKF2==mpLastKeyFrame)        // last keyframe이 아닐때만 아래 코드 실행
             continue;
 
         // Check first that baseline is not too short
-        cv::Mat Ow2 = pKF2->GetCameraCenter();
-        cv::Mat vBaseline = Ow2-Ow1;
+        cv::Mat Ow2 = pKF2->GetCameraCenter();      // translation 3*1
+        cv::Mat vBaseline = Ow2-Ow1;        // vector baseline
         const float baseline = cv::norm(vBaseline);
 
         if((mSensor!=System::MONOCULAR)||(mSensor!=System::IMU_MONOCULAR))
