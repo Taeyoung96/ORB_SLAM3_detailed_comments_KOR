@@ -52,7 +52,7 @@ ORB SLAM3 코드를 볼 때, 코드에 대한 이해도를 빠르게 해줄 [ORB
     > ORB SLAM3에서 IMU preintegration을 진행할 때 Reference가 된 논문.  
 
 <details>
-<summary> Original Readme.md </summary>
+<summary> Original Readme.md (V0.4: Beta version, 21 April 2021) </summary>
 <div markdown="1">
 
 
