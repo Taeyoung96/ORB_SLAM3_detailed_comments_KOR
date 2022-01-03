@@ -2675,7 +2675,7 @@ void Tracking::CheckReplacedInLastFrame()
 
         if(pMP)
         {
-            MapPoint* pRep = pMP->GetReplaced();
+            MapPoint* pRep = pMP->GetReplaced();    // mMutexFeatures, mMutexPos를 mutex lock 시키고 return.
             if(pRep)
             {
                 mLastFrame.mvpMapPoints[i] = pRep;
@@ -2692,10 +2692,10 @@ bool Tracking::TrackReferenceKeyFrame()
 
     // We perform first an ORB matching with the reference keyframe
     // If enough matches are found we setup a PnP solver
-    ORBmatcher matcher(0.7,true);
+    ORBmatcher matcher(0.7,true);       // 0.7은 hamming distance값으로 유사도를 의미, true : check orientation (양수)
     vector<MapPoint*> vpMapPointMatches;
 
-    int nmatches = matcher.SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);
+    int nmatches = matcher.SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);      // referenceKF, currentFrame 사이의 tracking되는 map point 수
 
     if(nmatches<15)
     {
@@ -2710,7 +2710,7 @@ bool Tracking::TrackReferenceKeyFrame()
 
 
     // cout << " TrackReferenceKeyFrame mLastFrame.mTcw:  " << mLastFrame.mTcw << endl;
-    Optimizer::PoseOptimization(&mCurrentFrame);
+    Optimizer::PoseOptimization(&mCurrentFrame);        // pose optimization
 
     // Discard outliers
     int nmatchesMap = 0;
@@ -2734,7 +2734,8 @@ bool Tracking::TrackReferenceKeyFrame()
                 pMP->mnLastFrameSeen = mCurrentFrame.mnId;
                 nmatches--;
             }
-            else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+            else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)        // Observations()함수는 nObs를 return하는데 왼쪽과 오른쪽에서 모두 발견되면 2 (stereo), 왼쪽에서만 발견되면 1 (mono).
+            // Observations()의 정확한 해석은 추가 확인이 필요합니다.
                 nmatchesMap++;
         }
     }
@@ -2749,37 +2750,37 @@ bool Tracking::TrackReferenceKeyFrame()
 void Tracking::UpdateLastFrame()
 {
     // Update pose according to reference keyframe
-    KeyFrame* pRef = mLastFrame.mpReferenceKF;
-    cv::Mat Tlr = mlRelativeFramePoses.back();
+    KeyFrame* pRef = mLastFrame.mpReferenceKF;      //mpReferenceKF : reference keyframe
+    cv::Mat Tlr = mlRelativeFramePoses.back();      // 마지막 요소(마지막 pose)를 반환
     mLastFrame.SetPose(Tlr*pRef->GetPose());
 
-    if(mnLastKeyFrameId==mLastFrame.mnId || mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR || !mbOnlyTracking)
+    if(mnLastKeyFrameId==mLastFrame.mnId || mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR || !mbOnlyTracking)        // mbOnlyTracking : SLAM mode or only localization mode
         return;
 
     // Create "visual odometry" MapPoints
     // We sort points according to their measured depth by the stereo/RGB-D sensor
     vector<pair<float,int> > vDepthIdx;
-    vDepthIdx.reserve(mLastFrame.N);
+    vDepthIdx.reserve(mLastFrame.N);        // 추가 공간 할당
     for(int i=0; i<mLastFrame.N;i++)
     {
         float z = mLastFrame.mvDepth[i];
         if(z>0)
         {
-            vDepthIdx.push_back(make_pair(z,i));
+            vDepthIdx.push_back(make_pair(z,i));        // map points의 depth와 id를 pair로 저장
         }
     }
 
     if(vDepthIdx.empty())
         return;
 
-    sort(vDepthIdx.begin(),vDepthIdx.end());
+    sort(vDepthIdx.begin(),vDepthIdx.end());        // 정렬
 
     // We insert all close points (depth<mThDepth)
     // If less than 100 close points, we insert the 100 closest ones.
     int nPoints = 0;
-    for(size_t j=0; j<vDepthIdx.size();j++)
+    for(size_t j=0; j<vDepthIdx.size();j++)     // map에는 가까운 거리순으로 100개의 map point(3d)만 저장한다.
     {
-        int i = vDepthIdx[j].second;
+        int i = vDepthIdx[j].second;        // i = id
 
         bool bCreateNew = false;
 
@@ -2791,7 +2792,7 @@ void Tracking::UpdateLastFrame()
             bCreateNew = true;
         }
 
-        if(bCreateNew)
+        if(bCreateNew)      // 새로운 map point를 추가
         {
             cv::Mat x3D = mLastFrame.UnprojectStereo(i);
             MapPoint* pNewMP = new MapPoint(x3D,mpAtlas->GetCurrentMap(),&mLastFrame,i);

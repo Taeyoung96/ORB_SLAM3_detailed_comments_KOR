@@ -296,8 +296,25 @@ protected:
     cv::Mat ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2);   Fundamental Matrix
     void CreateInitialMapMonocular();
 
+    /* !
+    * @brief LastFrame의 map points를 mutex lock 시키는 함수.
+    * @param None
+    * @return None
+    */
     void CheckReplacedInLastFrame();
+
+    /* !
+    * @brief referenceKF과 currentKF사이의 tracking이 정상적인지를 확인하는 함수.
+    * @param None
+    * @return None
+    */
     bool TrackReferenceKeyFrame();
+
+    /* !
+    * @brief Pose를 업데이트하고, 가까운 거리순으로 depth threshold이하 & max 100개의 3D map points를 저장한다.
+    * @param None
+    * @return None
+    */
     void UpdateLastFrame();
 
     /* !
