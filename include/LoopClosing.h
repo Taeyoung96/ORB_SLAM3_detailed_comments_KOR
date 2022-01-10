@@ -74,7 +74,11 @@ public:
     */
     void SetLocalMapper(LocalMapping* pLocalMapper);
 
-    // Main function
+    /* !
+    * @brief Main function 
+    * @param None
+    * @return None
+    */
     void Run();
 
     /* !

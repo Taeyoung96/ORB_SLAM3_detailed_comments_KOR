@@ -59,20 +59,25 @@ void LoopClosing::Run()
 
     while(1)
     {
+        mbFinished =false;      // Run()함수를 실행했으므로 Finish하지 않았다라는 것을 알려주기 위한 Flag
+
+    while(1)
+    {
         //NEW LOOP AND MERGE DETECTION ALGORITHM
         //----------------------------
-        if(CheckNewKeyFrames())
+        if(CheckNewKeyFrames()) // KeyFrame들에 대한 DB가 존재하면 LoopDetection을 시도하고, 그렇지 않으면 초기화를 해줌
         {
-            if(mpLastCurrentKF)
+            if(mpLastCurrentKF) // Last Current KeyFrame이 존재하면
             {
-                mpLastCurrentKF->mvpLoopCandKFs.clear();
-                mpLastCurrentKF->mvpMergeCandKFs.clear();
+                mpLastCurrentKF->mvpLoopCandKFs.clear();    // Loop Candidate Key Frames를 clear
+                mpLastCurrentKF->mvpMergeCandKFs.clear();   // Merge Candidate Key Frames를 clear
             }
 #ifdef REGISTER_TIMES
             timeDetectBoW = 0;
             std::chrono::steady_clock::time_point time_StartDetectBoW = std::chrono::steady_clock::now();
 #endif
-            bool bDetected = NewDetectCommonRegions();
+            bool bDetected = NewDetectCommonRegions();  // LoopClosure KF 및 Merged KF 을 탐색하는 것이 목적
+                                                        // mlpLoopKeyFrameQueue의 DB값이 존재할 때 작동
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndDetectBoW = std::chrono::steady_clock::now();
             double timeDetect = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndDetectBoW - time_StartDetectBoW).count();
@@ -86,31 +91,43 @@ void LoopClosing::Run()
             vTimePRTotal_ms.push_back(timeDetect);
 #endif
 
-            if(bDetected)
+            if(bDetected)   // 새로운 LoopClosure KeyFrames와 Merged Key Frames를 찾을 경우
             {
+            // mbMergeDetected : NewDetectCommonRegions() 함수 안에서, 
+            // CurrentKF와 잠재적 MergeKF 영역에 대하여 현재 KF와 이전 KF들로부터 공통된 영역을 발견한 횟수가 3이상일 경우 true
                 if(mbMergeDetected)
                 {
                     if ((mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO) &&
-                        (!mpCurrentKF->GetMap()->isImuInitialized()))
+                        (!mpCurrentKF->GetMap()->isImuInitialized()))   // IMU_Monocular이거나 IMU_Stereo인데 초기화가 진행되지 않았을 경우
                     {
-                        cout << "IMU is not initilized, merge is aborted" << endl;
+                        cout << "IMU is not initilized, merge is aborted" << endl;  // 초기화가 안되어 있으면 Merge 중단
                     }
-                    else
+                    else    // IMU_Monocular이거나 IMU_Stereo인데 초기화가 진행되었거나, Monocular or Stereo 모드일 경우
                     {
                         Verbose::PrintMess("*Merged detected", Verbose::VERBOSITY_QUIET);
                         Verbose::PrintMess("Number of KFs in the current map: " + to_string(mpCurrentKF->GetMap()->KeyFramesInMap()), Verbose::VERBOSITY_DEBUG);
-                        cv::Mat mTmw = mpMergeMatchedKF->GetPose();
-                        g2o::Sim3 gSmw2(Converter::toMatrix3d(mTmw.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTmw.rowRange(0, 3).col(3)),1.0);
-                        cv::Mat mTcw = mpCurrentKF->GetPose();
-                        g2o::Sim3 gScw1(Converter::toMatrix3d(mTcw.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTcw.rowRange(0, 3).col(3)),1.0);
-                        g2o::Sim3 gSw2c = mg2oMergeSlw.inverse();
-                        g2o::Sim3 gSw1m = mg2oMergeSlw;
 
-                        mSold_new = (gSw2c * gScw1);
+                        cv::Mat mTmw = mpMergeMatchedKF->GetPose(); // world to matched Key Frame의 Pose를 가져온다. (Transformation Matrix)
+                        g2o::Sim3 gSmw2(Converter::toMatrix3d(mTmw.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTmw.rowRange(0, 3).col(3)),1.0);
+                        // gSmw2 - MergeMatchced KeyFrame의 Sim3 값 (world to Mergematched keyframe)
+
+                        cv::Mat mTcw = mpCurrentKF->GetPose();  // world to current Key Frame의 Pose를 가져온다. (Transformation Matrix)
+                        g2o::Sim3 gScw1(Converter::toMatrix3d(mTcw.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(mTcw.rowRange(0, 3).col(3)),1.0);
+                        // gScw1 - Current KeyFrame의 Sim3 값 (world to Current KeyFrame)
+                        // mg2oMergeSlw - Merge된 Local Window KeyFrame의 Sim3 값 (world to Local Window KeyFrame)
+
+                        g2o::Sim3 gSw2c = mg2oMergeSlw.inverse();   // g2w2c - (Local Window to world)의 Sim3
+                        g2o::Sim3 gSw1m = mg2oMergeSlw; // gSwm1 - Merge된 Local Window KeyFrame의 Sim3 값 (world to Local Window KeyFrame)
+
+                        mSold_new = (gSw2c * gScw1);    // Local Window KeyFrame to Current KeyFrame의 Sim3값
 
                         if(mpCurrentKF->GetMap()->IsInertial() && mpMergeMatchedKF->GetMap()->IsInertial())
+                        // Current Key Frame의 Map에 IMU sensor가 있고, Merge Matched Key Frame의 Map에 IMU sensor가 있으면
                         {
                             if(mSold_new.scale()<0.90||mSold_new.scale()>1.1){
+                            //  Local Window KeyFrame to Current KeyFrame의 Scale 범위가 0.9보다 작거나, 1.1보다 크면
+
+                                // Merge 관련 변수 초기화
                                 mpMergeLastCurrentKF->SetErase();
                                 mpMergeMatchedKF->SetErase();
                                 mnMergeNumCoincidences = 0;
@@ -119,12 +136,17 @@ void LoopClosing::Run()
                                 mnMergeNumNotFound = 0;
                                 mbMergeDetected = false;
                                 Verbose::PrintMess("scale bad estimated. Abort merging", Verbose::VERBOSITY_NORMAL);
-                                continue;
+                                continue;      // while문을 빠져 나온다.
                             }
                             // If inertial, force only yaw
                             if ((mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO) &&
                                    mpCurrentKF->GetMap()->GetIniertialBA1()) // TODO, maybe with GetIniertialBA1
+                                // IMU 센서를 사용하고 mbIMU_BA1가 true인 경우
+                                // mbIMU_BA1는 LoopClosing::MergeLocal2()와 LocalMapping::Run()에서 VIBA 부분에서 true로 바뀜
                             {
+                                // On-Manifold Preintegration for Real-Time Visual–Inertial Odometry 논문의
+                                // A. Notions of Riemannian Geometry 부분 참고
+                                
                                 Eigen::Vector3d phi = LogSO3(mSold_new.rotation().toRotationMatrix());
                                 phi(0)=0;
                                 phi(1)=0;
@@ -132,17 +154,22 @@ void LoopClosing::Run()
                             }
                         }
 
-                        mg2oMergeSmw = gSmw2 * gSw2c * gScw1;
-
-                        mg2oMergeScw = mg2oMergeSlw;
+                        mg2oMergeSmw = gSmw2 * gSw2c * gScw1;   // 사용하지 않는 변수
+                        // gSmw2 - MergeMatchced KeyFrame의 Sim3 값 (world to Mergematched keyframe)
+                        // (gSw2c * gScw1) - // Local Window KeyFrame to Current KeyFrame의 Sim3값
+                        // MergeMatched KeyFrame과 Local Window KeyFrame의 관계를 아직 파악하지 못함...
+                        
+                        mg2oMergeScw = mg2oMergeSlw;    // mg2oMergeSlw값을 활용해 mg2oMergeScw를 초기화
 
 #ifdef REGISTER_TIMES
                         std::chrono::steady_clock::time_point time_StartMerge = std::chrono::steady_clock::now();
 #endif
-                        if (mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO)
-                            MergeLocal2();
-                        else
-                            MergeLocal();
+                        if (mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO) // IMU가 존재하면 
+                            MergeLocal2();  // MergeLocal2 실행
+                            // Merge할 부분을 찾았을 때 IMU를 활용해서 Current Map에 있는 정보들(Key Frame, Map point, Essential Graph)을 Merge Map에 있는 정보들과 합치고 최적화 
+                        else    // IMU가 존재하지 않으면 
+                            MergeLocal();   // MergeLocal 실행
+                            // Merge할 부분을 찾았을 때 Current Map에 있는 정보들(Key Frame, Map point, Essential Graph)을 Merge Map에 있는 정보들과 합치고 최적화 (IMU 활용 X)
 #ifdef REGISTER_TIMES
                         std::chrono::steady_clock::time_point time_EndMerge = std::chrono::steady_clock::now();
                         double timeMerge = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndMerge - time_StartMerge).count();
@@ -150,11 +177,13 @@ void LoopClosing::Run()
 #endif
                     }
 
-                    vdPR_CurrentTime.push_back(mpCurrentKF->mTimeStamp);
-                    vdPR_MatchedTime.push_back(mpMergeMatchedKF->mTimeStamp);
-                    vnPR_TypeRecogn.push_back(1);
+                    // 여기 있는 Vector들은 따로 사용하지 않는 것으로 추정
+                    vdPR_CurrentTime.push_back(mpCurrentKF->mTimeStamp);        // Current Key Frame의 Time stamp에 대한 Vector
+                    vdPR_MatchedTime.push_back(mpMergeMatchedKF->mTimeStamp);   // Merge Matched Key Frame의 Time stamp에 대한 Vector
+                    vnPR_TypeRecogn.push_back(1);                               // Type 1을 push back
 
                     // Reset all variables
+                    // Merge와 관련된 변수들 초기화
                     mpMergeLastCurrentKF->SetErase();
                     mpMergeMatchedKF->SetErase();
                     mnMergeNumCoincidences = 0;
@@ -166,6 +195,7 @@ void LoopClosing::Run()
                     if(mbLoopDetected)
                     {
                         // Reset Loop variables
+                        // Loop와 관련된 변수들 초기화
                         mpLoopLastCurrentKF->SetErase();
                         mpLoopMatchedKF->SetErase();
                         mnLoopNumCoincidences = 0;
@@ -175,31 +205,40 @@ void LoopClosing::Run()
                         mbLoopDetected = false;
                     }
 
-                }
+                }   // if(mbMergeDetected)에 대한 괄호 닫기
 
                 if(mbLoopDetected)
+                // mbLoopDetected : DetectCommonRegionsFromBoW()는 이전 프레임들에서 공통뷰를 찾는데 사용되는 함수, 
+                // 연속된 3개 이상의 KF가 발견되면 mbLoopDetected=True
                 {
-                    vdPR_CurrentTime.push_back(mpCurrentKF->mTimeStamp);
-                    vdPR_MatchedTime.push_back(mpLoopMatchedKF->mTimeStamp);
-                    vnPR_TypeRecogn.push_back(0);
+                    // 여기 있는 Vector들은 따로 사용하지 않는 것으로 추정
+                    vdPR_CurrentTime.push_back(mpCurrentKF->mTimeStamp);        // Current Key Frame의 Time stamp에 대한 Vector
+                    vdPR_MatchedTime.push_back(mpLoopMatchedKF->mTimeStamp);    // Merge Matched Key Frame의 Time stamp에 대한 Vector
+                    vnPR_TypeRecogn.push_back(0);                               // Type 0을 push back
 
 
                     Verbose::PrintMess("*Loop detected", Verbose::VERBOSITY_QUIET);
 
-                    mg2oLoopScw = mg2oLoopSlw;
-                    if(mpCurrentKF->GetMap()->IsInertial())
+                    mg2oLoopScw = mg2oLoopSlw;  // mg2oLoopSlw는 NewDetectCommonRegions()에서 초기화
+                                                // mg2oLoopSlw의 값을 mg2oLoopScw로 초기화
+
+                    if(mpCurrentKF->GetMap()->IsInertial()) // Current Key Frame의 Map에 IMU가 존재하면
                     {
-                        cv::Mat Twc = mpCurrentKF->GetPoseInverse();
+                        cv::Mat Twc = mpCurrentKF->GetPoseInverse();    // Current KF to World Transformation Matrix
                         g2o::Sim3 g2oTwc(Converter::toMatrix3d(Twc.rowRange(0, 3).colRange(0, 3)),Converter::toVector3d(Twc.rowRange(0, 3).col(3)),1.0);
-                        g2o::Sim3 g2oSww_new = g2oTwc*mg2oLoopScw;
+                        //  Current KF to World의 Sim3값 초기화
+                        g2o::Sim3 g2oSww_new = g2oTwc*mg2oLoopScw;  // Current KF to Loop KeyFrame의 Sim3 값
 
                         Eigen::Vector3d phi = LogSO3(g2oSww_new.rotation().toRotationMatrix());
 
+                        // phi의 원소 값의 절대값을 검사
                         if (fabs(phi(0))<0.008f && fabs(phi(1))<0.008f && fabs(phi(2))<0.349f)
                         {
-                            if(mpCurrentKF->GetMap()->IsInertial())
+                            if(mpCurrentKF->GetMap()->IsInertial()) // Current KF의 Map에 Inertial이 되어있으면
                             {
                                 // If inertial, force only yaw
+                                // IMU 센서를 사용하고 mbIMU_BA2가 true인 경우
+                                // mbIMU_BA2는 LoopClosing::MergeLocal2()와 LocalMapping::Run()에서 VIBA 부분에서 true로 바뀜
                                 if ((mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO) &&
                                         mpCurrentKF->GetMap()->GetIniertialBA2())
                                 {
@@ -210,12 +249,13 @@ void LoopClosing::Run()
                                 }
                             }
 
-                            mvpLoopMapPoints = mvpLoopMPs;//*mvvpLoopMapPoints[nCurrentIndex];
+                            mvpLoopMapPoints = mvpLoopMPs; //*mvvpLoopMapPoints[nCurrentIndex];
+                            // Loop Map Point vector 초기화
 
 #ifdef REGISTER_TIMES
                             std::chrono::steady_clock::time_point time_StartLoop = std::chrono::steady_clock::now();
 #endif
-                            CorrectLoop();
+                            CorrectLoop(); // Loop를 Detect 했을 때, 찾을 Loop를 활용하여 Key Frame의 Sim3를 최적화하고, Map point도 최적화
 #ifdef REGISTER_TIMES
                             std::chrono::steady_clock::time_point time_EndLoop = std::chrono::steady_clock::now();
                             double timeLoop = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndLoop - time_StartLoop).count();
@@ -227,13 +267,13 @@ void LoopClosing::Run()
                             cout << "BAD LOOP!!!" << endl;
                         }
                     }
-                    else
+                    else    // Current Key Frame의 Map에 IMU가 존재하지 않으면
                     {
-                        mvpLoopMapPoints = mvpLoopMPs;
+                        mvpLoopMapPoints = mvpLoopMPs;      // Loop Map Point vector 초기화
 #ifdef REGISTER_TIMES
                         std::chrono::steady_clock::time_point time_StartLoop = std::chrono::steady_clock::now();
 #endif
-                        CorrectLoop();
+                        CorrectLoop();  // Loop를 Detect 했을 때, 찾을 Loop를 활용하여 Key Frame의 Sim3를 최적화하고, Map point도 최적화
 
 #ifdef REGISTER_TIMES
                         std::chrono::steady_clock::time_point time_EndLoop = std::chrono::steady_clock::now();
@@ -243,6 +283,7 @@ void LoopClosing::Run()
                     }
 
                     // Reset all variables
+                    // Loop와 관련된 변수들 초기화
                     mpLoopLastCurrentKF->SetErase();
                     mpLoopMatchedKF->SetErase();
                     mnLoopNumCoincidences = 0;
@@ -250,22 +291,25 @@ void LoopClosing::Run()
                     mvpLoopMPs.clear();
                     mnLoopNumNotFound = 0;
                     mbLoopDetected = false;
-                }
+                }   // if(mbLoopDetected)에 대한 괄호 닫기
 
-            }
-            mpLastCurrentKF = mpCurrentKF;
+            }   // if(bDetected)에 대한 괄호 닫기
+
+            mpLastCurrentKF = mpCurrentKF;  // Current KeyFrame을 Last Current KeyFrame으로 초기화
+
+        }       //  if(CheckNewKeyFrames())에 대한 괄호 닫기
+
+        ResetIfRequested(); // Request가 들어오면 변수들을 reset시키는 함수
+        // Request를 시키는 함수 :  Tracking::Reset(), System::Shutdown()
+
+        if(CheckFinish()){      // System::Shutdown()에서 mbFinishRequested에 대한 변수를 변경
+            break;  // while문 탈출
         }
 
-        ResetIfRequested();
+        usleep(5000);   // 5ms 시간 동안 대기
+    }    // while(1)에 대한 괄호 닫기
 
-        if(CheckFinish()){
-            break;
-        }
-
-        usleep(5000);
-    }
-
-    SetFinish();
+    SetFinish();    // mbFinished변수를 True로 선언 >> 끝났다는 것을 알림
 }
 
 void LoopClosing::InsertKeyFrame(KeyFrame *pKF)
@@ -548,7 +592,7 @@ bool LoopClosing::NewDetectCommonRegions()
         // DBoW2를 이용한 Ka의 Keypoint와 Km에 대한 local-window간의 2D-2D matching / 3D-3D matching을 사용하여 공통뷰의 개수를 업데이트        
         // @brief DetectCommonRegionsFromBoW()는 이전 프레임들에서 공통뷰를 찾는데 사용되는 함수
         // @Param mnLoopNumCoincidences는 CurrentKF와 공통되는 뷰의 개수를 의미하는데, 함수인자를 포인터로 넘겨주어 공통뷰의 개수를 업데이트
-        // @return 연속된 3개 이상의 KF가 발견되면 mbLoopDetected=True
+        // @return 연속된 3개 이상의 KF가 발견되면 mbMergeDetected=True
         mbMergeDetected = DetectCommonRegionsFromBoW(vpMergeBowCand, mpMergeMatchedKF, mpMergeLastCurrentKF, mg2oMergeSlw, mnMergeNumCoincidences, mvpMergeMPs, mvpMergeMatchedMPs);
     }
 
