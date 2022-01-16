@@ -1276,118 +1276,152 @@ void LoopClosing::CorrectLoop()
     mLastLoopKFid = mpCurrentKF->mnId; //TODO old varible, it is not use in the new algorithm
 }
 
+// 코드 분석 =========================================================================
+/* !
+* @brief  VISUAL Map Merging 기법
+          mbMergedetected 일 때 MergeLocal2()는 IMU 센서를 활용했을 때이고, 
+          MergeLocal()은 IMU를 쓰지 않았을 때 Map merging
+* @call LocalMapping::Run()
+* @param None
+* @return None
+*/
 void LoopClosing::MergeLocal()
 {
-    Verbose::PrintMess("MERGE: Merge Visual detected!!!!", Verbose::VERBOSITY_NORMAL);
+    // merge map <-> Loop closing
+    // map merging => 성공적인 Place recognition일 때, Keyframe Ka와 Active map 요소 Ma, 
+    //                그리고 Km과 Stored map 요소인 Mm 사이 data association
+    //     Two step 1) Merge는 공시성 그래프의 Ka들과 Km에 의해 정의된 welding window에서 수행됨
+    //              2) 이 수정은 포즈 그래프 최적화에 의해 병합된 맵의 나머지 부분으로 전파된다.
+    // Loop closing => map merging과 유사하지만, 두 키프레임 모두 Active map에 속해 있음.
 
-    int numTemporalKFs = 15;
+    
+    Verbose::PrintMess("MERGE: Merge Visual detected!!!!", Verbose::VERBOSITY_NORMAL); // 병합조건이 충족 되었을 때 실행 됨.
+
+    int numTemporalKFs = 15; // 입력된 키프레임 수
 
     //Relationship to rebuild the essential graph, it is used two times, first in the local window and later in the rest of the map
-    KeyFrame* pNewChild;
-    KeyFrame* pNewParent;
+    // essential graph(factor grpah)를 다시 작성하는것과 연관하여 처음에는 local window 에서, 나중에는 맵의 나머지 부분에서 두 번 사용됩니다.
 
-    vector<KeyFrame*> vpLocalCurrentWindowKFs;
-    vector<KeyFrame*> vpMergeConnectedKFs;
-
-    // Flag that is true only when we stopped a running BA, in this case we need relaunch at the end of the merge
-    bool bRelaunchBA = false;
-
-    Verbose::PrintMess("MERGE: Check Full Bundle Adjustment", Verbose::VERBOSITY_DEBUG);
-    // If a Global Bundle Adjustment is running, abort it
-    if(isRunningGBA())
-    {
-        unique_lock<mutex> lock(mMutexGBA);
-        mbStopGBA = true;
+    // Local window :  Keyframe Ka와 Active map 요소 Ma, 그리고 Km과 Stored map 요소인 Mm 일 때
+    //                 가장 좋은 covisible keyframe들과 모든 map points들을 의미하는 Km을 포함하는 local window를 정의
+    //             true; // stop
 
         mnFullBAIdx++;
 
-        if(mpThreadGBA)
+        if(mpThreadGBA) // GBA 쓰레드 중단
         {
             mpThreadGBA->detach();
             delete mpThreadGBA;
         }
-        bRelaunchBA = true;
+        bRelaunchBA = true; // 추후에 다시 GBA 켜는 변수, Launch a new thread to perform Global Bundle Adjustment
     }
 
-    Verbose::PrintMess("MERGE: Request Stop Local Mapping", Verbose::VERBOSITY_DEBUG);
+    Verbose::PrintMess("MERGE: Request Stop Local Mapping", Verbose::VERBOSITY_DEBUG); // Local mapping도 중지
     mpLocalMapper->RequestStop();
-    // Wait until Local Mapping has effectively stopped
+    // Wait until Local Mapping has effectively stopped, 로컬 매핑이 효과적으로 중지될 때까지 대기
     while(!mpLocalMapper->isStopped())
     {
-        usleep(1000);
+        usleep(1000); //1000마이크로초 쯤
     }
-    Verbose::PrintMess("MERGE: Local Map stopped", Verbose::VERBOSITY_DEBUG);
+    Verbose::PrintMess("MERGE: Local Map stopped", Verbose::VERBOSITY_DEBUG); // Local mapping 중지
 
     mpLocalMapper->EmptyQueue();
+    
+
+    // *VISUAL Map merging 설명
+    // 첫째, 병합은 공통뷰 그래프에서 Ka와 Km의 이웃에 의해 정의된 welding window에서 수행되며, 
+    // 두 번째 단계에서는 correction보정이 포즈 그래프 최적화에 의해 병합된 맵의 나머지 부분으로 전파된다. 
+
+    // * 세부 단계
+    // 1) Welding window assembly : Welding window는 Ka와 그covisible keyframes, Km과 그 covisible keyframes 그리고 관찰된 모든 map point가 포함되어 있다.
+    //                              Welding window에 포함되기 전에, keyframes과 Ma에 속하는 맵포인트들을 Tma 변환행렬에의해 각각의 Mm을 Align 시킴 
+
+    // 2) Merging Maps            : 지도 Ma와 Mm이 함께 Welding되어 새로운 Active map이 됨. 중복된 점을 제거하기 위해 Mm 키 프레임에서 Ma 포인트가 검색. 각 매칭 포인트 마다
+    //                              Ma에서 제거되고 Mm 단위의 점은 제거된 점의 모든 관측치를 계속 누적합니다. 발견된 새로운 midterm point associations 덕분에 Mm과 Ma에서 키 프레임을 연결하는 에지를 추가하여 
+    //                              공통뷰와 essential graph가 업데이트된다.
+
+    // 3) Welding bundle adjustment : Local BA는 Ma 및 Mm의 모든 키 프레임을 welding window에서 관찰되는 맵 포인트와 함께 최적화합니다 Welding window에 속하지 않지만 로컬 맵 포인트를 관찰하는 
+    //                               Mm의 키 프레임이 고정된 포즈로 BA에 포함됩니다. 최적화가 완료되면 Welding area에 포함된 모든 키 프레임을 카메라 추적에 사용할 수 있으므로 지도 Mm을 빠르고 정확하게 재사용할 수 있습니다.
+
+    // 4) Essential-graph optimization : 포즈 그래프 최적화는 전체 Merging map의 essential graph를 사용하여 수행되며, welding area에 키 프레임을 고정. 
+    //                                   이 최적화는 보정값을 용접 윈도우에서 지도의 나머지 부분으로 전파됨
 
     // Merge map will become in the new active map with the local window of KFs and MPs from the current map.
     // Later, the elements of the current map will be transform to the new active map reference, in order to keep real time tracking
+    // 병합 지도가 현재 지도에서 키프레임 및 맵포인트의 로컬 창과 함께 새 active map에 나타납니다.
+    // 나중에 실시간 추적을 위해 현재 맵의 요소가 새 active map 참조로 변환됩니다.
     Map* pCurrentMap = mpCurrentKF->GetMap();
     Map* pMergeMap = mpMergeMatchedKF->GetMap();
 
-    // Ensure current keyframe is updated
+    // Ensure current keyframe is updated, 
+    // 현재 키 프레임이 업데이트되었는지 확인
     mpCurrentKF->UpdateConnections();
 
+
+    // merging을 위한 선언문들 ========================================================
     //Get the current KF and its neighbors(visual->covisibles; inertial->temporal+covisibles)
+    // 현재 키프레임과 그것의 공통뷰 받아오기.
     set<KeyFrame*> spLocalWindowKFs;
     //Get MPs in the welding area from the current map
+    // 현재 맵에서 welding 부분으로 맵포인트를 가져오기.
     set<MapPoint*> spLocalWindowMPs;
-    if(pCurrentMap->IsInertial() && pMergeMap->IsInertial()) //TODO Check the correct initialization
+
+    if(pCurrentMap->IsInertial() && pMergeMap->IsInertial()) //TODO Check the correct initialization, 제대로 시작했는지 확인
     {
-        KeyFrame* pKFi = mpCurrentKF;
-        int nInserted = 0;
+        KeyFrame* pKFi = mpCurrentKF; // 현재 키프레임
+        int nInserted = 0;            // 임시 키프레임 15개 보다 작은지 확인
         while(pKFi && nInserted < numTemporalKFs)
         {
             spLocalWindowKFs.insert(pKFi);
-            pKFi = mpCurrentKF->mPrevKF;
+            pKFi = mpCurrentKF->mPrevKF; // 이전 키프레임 입력
             nInserted++;
 
-            set<MapPoint*> spMPi = pKFi->GetMapPoints();
-            spLocalWindowMPs.insert(spMPi.begin(), spMPi.end());
+            set<MapPoint*> spMPi = pKFi->GetMapPoints(); // 현재 맵포인트 입력
+            spLocalWindowMPs.insert(spMPi.begin(), spMPi.end()); // 맵포인트 시작점에서 끝점 입력
         }
 
-        pKFi = mpCurrentKF->mNextKF;
+        pKFi = mpCurrentKF->mNextKF; // 다음 키프레임 값
         while(pKFi)
         {
-            spLocalWindowKFs.insert(pKFi);
+            spLocalWindowKFs.insert(pKFi); // local window 키프레임 입력
 
             set<MapPoint*> spMPi = pKFi->GetMapPoints();
-            spLocalWindowMPs.insert(spMPi.begin(), spMPi.end());
+            spLocalWindowMPs.insert(spMPi.begin(), spMPi.end()); // local window map point 입력
         }
     }
     else
     {
-        spLocalWindowKFs.insert(mpCurrentKF);
+        spLocalWindowKFs.insert(mpCurrentKF); // 현재 키프레임만 입력
     }
 
-    vector<KeyFrame*> vpCovisibleKFs = mpCurrentKF->GetBestCovisibilityKeyFrames(numTemporalKFs);
-    spLocalWindowKFs.insert(vpCovisibleKFs.begin(), vpCovisibleKFs.end());
+    vector<KeyFrame*> vpCovisibleKFs = mpCurrentKF->GetBestCovisibilityKeyFrames(numTemporalKFs); // 공통뷰 키프레임을 받아옴
+    spLocalWindowKFs.insert(vpCovisibleKFs.begin(), vpCovisibleKFs.end()); // 공통뷰 키프레임 시작과 끝 값 입력
     const int nMaxTries = 3;
     int nNumTries = 0;
-    while(spLocalWindowKFs.size() < numTemporalKFs && nNumTries < nMaxTries)
+    while(spLocalWindowKFs.size() < numTemporalKFs && nNumTries < nMaxTries) // local window 키프레임 크기가 15개 미만이고 3번안에 마무리
     {
         vector<KeyFrame*> vpNewCovKFs;
         vpNewCovKFs.empty();
         for(KeyFrame* pKFi : spLocalWindowKFs)
         {
-            vector<KeyFrame*> vpKFiCov = pKFi->GetBestCovisibilityKeyFrames(numTemporalKFs/2);
+            vector<KeyFrame*> vpKFiCov = pKFi->GetBestCovisibilityKeyFrames(numTemporalKFs/2); // 15/2개 만큼 공통뷰 키프레임에 입력
             for(KeyFrame* pKFcov : vpKFiCov)
             {
                 if(pKFcov && !pKFcov->isBad() && spLocalWindowKFs.find(pKFcov) == spLocalWindowKFs.end())
                 {
-                    vpNewCovKFs.push_back(pKFcov);
+                    vpNewCovKFs.push_back(pKFcov); // 공통뷰 키프레임 입력
                 }
 
             }
         }
 
-        spLocalWindowKFs.insert(vpNewCovKFs.begin(), vpNewCovKFs.end());
-        nNumTries++;
+        spLocalWindowKFs.insert(vpNewCovKFs.begin(), vpNewCovKFs.end()); // 공통뷰 키프레임 처음과 끝 입력
+        nNumTries++; // 횟수 추가
     }
 
     for(KeyFrame* pKFi : spLocalWindowKFs)
     {
-        if(!pKFi || pKFi->isBad())
+        if(!pKFi || pKFi->isBad()) // 키프레임값 내에서 local window 에 map point 입력
             continue;
 
         set<MapPoint*> spMPs = pKFi->GetMapPoints();
@@ -1395,21 +1429,21 @@ void LoopClosing::MergeLocal()
     }
 
     set<KeyFrame*> spMergeConnectedKFs;
-    if(pCurrentMap->IsInertial() && pMergeMap->IsInertial()) //TODO Check the correct initialization
+    if(pCurrentMap->IsInertial() && pMergeMap->IsInertial()) //TODO Check the correct initialization, 제대로 시작했는지 확인
     {
-        KeyFrame* pKFi = mpMergeMatchedKF;
+        KeyFrame* pKFi = mpMergeMatchedKF; // 현재 키프레임
         int nInserted = 0;
-        while(pKFi && nInserted < numTemporalKFs)
+        while(pKFi && nInserted < numTemporalKFs) // 임시 키프레임 15개 보다 작은지 확인
         {
-            spMergeConnectedKFs.insert(pKFi);
-            pKFi = mpCurrentKF->mPrevKF;
+            spMergeConnectedKFs.insert(pKFi); 
+            pKFi = mpCurrentKF->mPrevKF; // 이전 키프레임 입력
             nInserted++;
         }
 
         pKFi = mpMergeMatchedKF->mNextKF;
         while(pKFi)
         {
-            spMergeConnectedKFs.insert(pKFi);
+            spMergeConnectedKFs.insert(pKFi); // local window 키프레임 입력
         }
     }
     else
@@ -1419,12 +1453,12 @@ void LoopClosing::MergeLocal()
     vpCovisibleKFs = mpMergeMatchedKF->GetBestCovisibilityKeyFrames(numTemporalKFs);
     spMergeConnectedKFs.insert(vpCovisibleKFs.begin(), vpCovisibleKFs.end());
     nNumTries = 0;
-    while(spMergeConnectedKFs.size() < numTemporalKFs && nNumTries < nMaxTries)
+    while(spMergeConnectedKFs.size() < numTemporalKFs && nNumTries < nMaxTries) // local window 키프레임 크기가 15개 미만이고 3번안에 마무리
     {
         vector<KeyFrame*> vpNewCovKFs;
         for(KeyFrame* pKFi : spMergeConnectedKFs)
         {
-            vector<KeyFrame*> vpKFiCov = pKFi->GetBestCovisibilityKeyFrames(numTemporalKFs/2);
+            vector<KeyFrame*> vpKFiCov = pKFi->GetBestCovisibilityKeyFrames(numTemporalKFs/2); // 15/2개 만큼 공통뷰 키프레임에 입력
             for(KeyFrame* pKFcov : vpKFiCov)
             {
                 if(pKFcov && !pKFcov->isBad() && spMergeConnectedKFs.find(pKFcov) == spMergeConnectedKFs.end())
@@ -2067,49 +2101,77 @@ void LoopClosing::MergeLocal2()
 
     return;
 }
+// ////////////////////////////////////////////////////////////////////////////////////////////////////////
+// 발표 분량
 
+// Project MapPoints observed in the neighborhood of the loop keyframe
+// into the current keyframe and neighbors using corrected poses.
+// Fuse duplications.
+
+// Loop Keyframe 주변에서 관찰된 맵포인트를 현재 키프레임과 이웃들을 보정된 자세를 활용하여 투영시킨다.
+
+// correctLoop() 현재 키프레임 및 인접 항목이 루프의 다른 쪽에 정렬되도록 모든 MapPoint를 수정
+// mergeLocal() 성공적인 Place recognition일 때, Keyframe Ka와 Active map 요소 Ma, 그리고 Km과 Stored map 요소인 Mm 사이 data association
+// loopclosing => 두 키프레임 모두 active map에 속해 있을 때.
+
+// CorrectLoop에 유사한 For문 존재(여기서는 현재 키 프레임 및 인접 항목이 루프의 다른 쪽에 정렬되도록 모든 MapPoint를 수정), 
+
+// searchAndFuse는 correctedpose를 활용
+
+// CorrectLoop(), MergeLocal() 에서 쓰임
+
+//Update the connections between the local window이후 활용(Place recognition은 이미 했음)
+// => 일단 새로운 키 프레임과 일치하는 맵 사이의 상대적인 포즈가 추정되면,
+// 일치하는 키프레임과 그 이웃을 가진 Local window를 Covisibility graph에서 정의한다.
 void LoopClosing::SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector<MapPoint*> &vpMapPoints)
 {
-    ORBmatcher matcher(0.8);
+    ORBmatcher matcher(0.8); // NNratio 0.8, 설명: https://m.blog.naver.com/PostView.naver?isHttpsRedirect=true&blogId=samsjang&logNo=220657746860
 
-    int total_replaces = 0;
+    int total_replaces = 0;  // 전체 replaces
 
     for(KeyFrameAndPose::const_iterator mit=CorrectedPosesMap.begin(), mend=CorrectedPosesMap.end(); mit!=mend;mit++)
-    {
-        int num_replaces = 0;
-        KeyFrame* pKFi = mit->first;
+    {   
+        // Eigen::aligned_allocator<std::pair<KeyFrame* const, g2o::Sim3> > > KeyFrameAndPose;
+        int num_replaces = 0; // 대체된 맵포인트들 갯수
+        KeyFrame* pKFi = mit->first; // 보정된 키프레임
         Map* pMap = pKFi->GetMap();
+        // 키프레임을 활용해 Place recognition => DBOW2 KF vector, 가장 유사한 벡터들 사의 SIM(3)를 구함(VI면 SE(3))
+        // 그냥 DBOW2 만 쓰면 50~80% 정확도 이지만, 기하학적 일치성 검사... 느림 => Active map 활용.
+        // Km과 Ka 사이의 매칭쌍 활용 => Local window를 Covisibility graph에서 정의 => Accuracy 상승
+        // Ka을 삭제하고, Km을 Mm에 누적 시킨다. 이를 essential graph와 covisibility graph에도 정의 => Welding window
 
-        g2o::Sim3 g2oScw = mit->second;
-        cv::Mat cvScw = Converter::toCvMat(g2oScw);
-
-        vector<MapPoint*> vpReplacePoints(vpMapPoints.size(),static_cast<MapPoint*>(NULL));
-        int numFused = matcher.Fuse(pKFi,cvScw,vpMapPoints,4,vpReplacePoints);
+        g2o::Sim3 g2oScw = mit->second; // 보정된 변환행렬
+        cv::Mat cvScw = Converter::toCvMat(g2oScw); // cv 행렬 형태로 변환(OpenCV에는 "벡터"를 표현하는 데이터 타입이 없다.)
+        //MapPoint(const cv::Mat &Pos, KeyFrame* pRefKF, Map* pMap);
+        vector<MapPoint*> vpReplacePoints(vpMapPoints.size(),static_cast<MapPoint*>(NULL)); // NULL을 MapPoint로 타입캐스팅
+        int numFused = matcher.Fuse(pKFi,cvScw,vpMapPoints,4,vpReplacePoints); // **이게 핵심 함수 
 
         // Get Map Mutex
         unique_lock<mutex> lock(pMap->mMutexMapUpdate);
         const int nLP = vpMapPoints.size();
         for(int i=0; i<nLP;i++)
         {
-            MapPoint* pRep = vpReplacePoints[i];
+            MapPoint* pRep = vpReplacePoints[i];// 변경된 포인트 갯수
             if(pRep)
             {
 
 
                 num_replaces += 1;
-                pRep->Replace(vpMapPoints[i]);
+                pRep->Replace(vpMapPoints[i]); // Replace() 에서 Map point들을 변경시킴
 
             }
         }
 
-        total_replaces += num_replaces;
+        total_replaces += num_replaces; // 쓰이지는 않는 변수
     }
 }
 
+// MergeLocal2()에서 쓰인다.
 
+// vConectedKFS: CurrKF과 Cov_CurrKF들을 포함하는 벡터
 void LoopClosing::SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<MapPoint*> &vpMapPoints)
 {
-    ORBmatcher matcher(0.8);
+    ORBmatcher matcher(0.8); // NNratio 0.8
 
     int total_replaces = 0;
 
@@ -2117,8 +2179,8 @@ void LoopClosing::SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<Ma
     {
         int num_replaces = 0;
         KeyFrame* pKF = (*mit);
-        Map* pMap = pKF->GetMap();
-        cv::Mat cvScw = pKF->GetPose();
+        Map* pMap = pKF->GetMap(); // 키프레임
+        cv::Mat cvScw = pKF->GetPose(); // 변환행렬
 
         vector<MapPoint*> vpReplacePoints(vpMapPoints.size(),static_cast<MapPoint*>(NULL));
         matcher.Fuse(pKF,cvScw,vpMapPoints,4,vpReplacePoints);
@@ -2128,11 +2190,11 @@ void LoopClosing::SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<Ma
         const int nLP = vpMapPoints.size();
         for(int i=0; i<nLP;i++)
         {
-            MapPoint* pRep = vpReplacePoints[i];
+            MapPoint* pRep = vpReplacePoints[i]; // 변경된 포인트 갯수
             if(pRep)
             {
                 num_replaces += 1;
-                pRep->Replace(vpMapPoints[i]);
+                pRep->Replace(vpMapPoints[i]); //Replace() 에서 Map point들을 변경시킴
             }
         }
         total_replaces += num_replaces;
@@ -2141,10 +2203,10 @@ void LoopClosing::SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<Ma
 
 
 
-void LoopClosing::RequestReset()
+void LoopClosing::RequestReset()  // Reset 요청 들어오면 reset 실행, trackRGBD, trackMono, trackStereo 실행시 활용
 {
     {
-        unique_lock<mutex> lock(mMutexReset);
+        unique_lock<mutex> lock(mMutexReset); // Mutex Lock, thread 동기화에 활용, (thread 동기화를 위해 접근하는 함수의 특정 부분을 지정해 그 부분을 thread가 온전히 100% 처리)
         mbResetRequested = true;
     }
 
@@ -2159,7 +2221,8 @@ void LoopClosing::RequestReset()
     }
 }
 
-void LoopClosing::RequestResetActiveMap(Map *pMap)
+// Verbose::PrintMess("Reseting Loop Closing...", Verbose::VERBOSITY_NORMAL);, // "Timestamp jump detected. State set to LOST. Reseting IMU integration..."
+void LoopClosing::RequestResetActiveMap(Map *pMap) // active map reset 요청 들어왔을 때, "TRACK: Reset map because local mapper set the bad imu flag "
 {
     {
         unique_lock<mutex> lock(mMutexReset);
@@ -2177,6 +2240,7 @@ void LoopClosing::RequestResetActiveMap(Map *pMap)
         usleep(3000);
     }
 }
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void LoopClosing::ResetIfRequested()
 {
