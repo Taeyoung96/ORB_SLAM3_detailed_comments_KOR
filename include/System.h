@@ -147,7 +147,20 @@ public:
     // See format details at: http://vision.in.tum.de/data/datasets/rgbd-dataset
     void SaveKeyFrameTrajectoryTUM(const string &filename);
 
+    /* !
+    * @brief EuRoC dataset에 대한 Trajectory를 저장하는 함수
+    * @call mono_euroc.cc / mono_inertial_euroc.cc / stereo_euroc.cc / stereo_inertial_euroc.cc
+    * @param filename 저장될 파일 이름    
+    * @return None
+    */
     void SaveTrajectoryEuRoC(const string &filename);
+
+    /* !
+    * @brief EuRoC dataset에 대한 Keyframe Trajectory를 저장하는 함수
+    * @call mono_euroc.cc / mono_inertial_euroc.cc / stereo_euroc.cc / stereo_inertial_euroc.cc
+    * @param filename 저장될 파일 이름    
+    * @return None
+    */
     void SaveKeyFrameTrajectoryEuRoC(const string &filename);
 
     // Save camera trajectory in the KITTI dataset format.
