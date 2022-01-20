@@ -559,18 +559,19 @@ void System::SaveTrajectoryEuRoC(const string &filename)
     list<bool>::iterator lbL = mpTracker->mlbLost.begin();                        // tracking fail 여부(fail==true)
 
     // RelativeFramePoses에 대하여 for문 순회
+    // 이 for문 구문에서 trajectory를 정렬하고 파일로 작성
     // RelativeFramePoses은 기본적으로 Reference Keyframe에 대한 각 Keyframe의 relative transformation을 포함
     // RelativeFramePoses(lit) / mlpReferences(lRit) / mlFrameTimes(lT) / mlbLost(lbL) 는 개수가 동일
     for(list<cv::Mat>::iterator lit=mpTracker->mlRelativeFramePoses.begin(),
         lend=mpTracker->mlRelativeFramePoses.end();lit!=lend;lit++, lRit++, lT++, lbL++)
     {
-        if(*lbL)
+        if(*lbL) // KF이 tracking fail인 경우 skip
             continue;
-
 
         KeyFrame* pKF = *lRit; // 참조KF을 가져옴
 
         cv::Mat Trw = cv::Mat::eye(4,4,CV_32F); // world to refrenceKF에 대한 ideneity행렬 생성
+                                                // reference frame[0]이 결국 world frame이기 때문에 ideneity matrix
 
         // KeyFrame이 존재하지 않으면 skip
         if (!pKF)
