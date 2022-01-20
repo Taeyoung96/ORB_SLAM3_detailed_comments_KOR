@@ -597,6 +597,8 @@ void System::SaveTrajectoryEuRoC(const string &filename)
         }
 
         // referenceKF[first KF]를 기준의 currentKF에 대한 변환행렬
+        // badKF이 아니면: world to cam
+        // badKF이면    : world to parentKF_cam
         Trw = Trw*pKF->GetPose()*Twb; // Tcp*Tpw*Twb0=Tcb0 where b0 is the new world reference
 
         if (mSensor == IMU_MONOCULAR || mSensor == IMU_STEREO) // IMU 사용하는 경우
