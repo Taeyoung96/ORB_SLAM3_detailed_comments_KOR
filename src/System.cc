@@ -536,7 +536,7 @@ void System::SaveTrajectoryEuRoC(const string &filename)
         Twb = vpKFs[0]->GetImuPose(); // 첫번째 KeyFrame으로 부터 IMU Pose정보를 가져옴 (body[0] to world)
     else // IMU를 사용하지 않는 경우
         Twb = vpKFs[0]->GetPoseInverse(); // 첫번째 KeyFrame으로 부터 Camera Pose정보의 Inverse정보를 가져옴
-                                          // (camera[0] to world)
+                                          // (camera[0] to world) 
 
     ofstream f;                // Trajectory 저장을 위한 객체 변수 선언
     f.open(filename.c_str());  // @param filename으로 파일 open        
