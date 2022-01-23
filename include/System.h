@@ -163,10 +163,17 @@ public:
     */
     void SaveKeyFrameTrajectoryEuRoC(const string &filename);
 
+
     // Save camera trajectory in the KITTI dataset format.
     // Only for stereo and RGB-D. This method does not work for monocular.
     // Call first Shutdown()
     // See format details at: http://www.cvlibs.net/datasets/kitti/eval_odometry.php
+    /* !
+     * @brief KITTI dataset format으로 trajectory 저장
+     * @call ros_stereo.cc에서 Shutdown()함수 실행 후 사용
+     * @param Trajectory 출력 파일(.txt)
+     * @return None
+    */
     void SaveTrajectoryKITTI(const string &filename);
 
     // TODO: Save/Load functions
@@ -175,15 +182,60 @@ public:
 
     // Information from most recent processed frame
     // You can call this right after TrackMonocular (or stereo or RGBD)
+    // 가장 최근에 처리된 프레임의 정보를 알아옵니다.
+    // TrackMonocular (or stereo or RGBD)를 사용한 다음에 함수들을 호출할 수 있습니다.
+
+    /* !
+     * @brief Tarcking의 상태를 알기 위해서 사용하는 함수
+     * @param None
+     * @return Tracking 상태 (Tracking.h의 enum eTrackingState 참고)
+    */
     int GetTrackingState();
+    
+    /* !
+     * @brief key frame의 map points들의 정보를 알기 위해 사용하는 함수,  
+     *  key frame은 TrackMonocular (or stereo or RGBD)에서 결정
+     * @param None
+     * @return Map points들을 담고 있는 vector
+    */
     std::vector<MapPoint*> GetTrackedMapPoints();
+
+    /* !
+     * @brief Undistorted된 key frame의 key points들의 정보를 알기 위해 사용하는 함수,  
+     *  key frame은 TrackMonocular (or stereo or RGBD)에서 결정
+     * @param None
+     * @return key points들을 담고 있는 vector
+    */
     std::vector<cv::KeyPoint> GetTrackedKeyPointsUn();
 
     // For debugging
+
+    /* !
+     * @brief IMU initialization 정보를 통해서 Timestamp 값을 얻어내기 위한 함수
+     * @param None
+     * @return Timestamp 값
+    */
     double GetTimeFromIMUInit();
+
+    /* !
+     * @brief LOST상태인지 아닌지, 판단하기 위한 함수
+     * @param None
+     * @return LOST 상태이면 true, 그렇지 않으면 false
+    */
     bool isLost();
+
+    /* !
+     * @brief Finish인지 확인하는 함수 (Time stamp를 활용)
+     * @param None
+     * @return Finish 상태이면 true, 그렇지 않으면 false
+    */
     bool isFinished();
 
+    /* !
+     * @brief Dataset(Map)을 바꾸는 함수 : 여러 Sequence를 사용할 때
+     * @param None
+     * @return None
+    */
     void ChangeDataset();
 
 #ifdef REGISTER_TIMES

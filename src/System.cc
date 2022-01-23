@@ -685,49 +685,73 @@ void System::SaveKeyFrameTrajectoryEuRoC(const string &filename)
 void System::SaveTrajectoryKITTI(const string &filename)
 {
     cout << endl << "Saving camera trajectory to " << filename << " ..." << endl;
-    if(mSensor==MONOCULAR)
+    if(mSensor==MONOCULAR)  // KITTI의 경우 RGB-D모드와 Stereo모드 일 때만 적용
     {
         cerr << "ERROR: SaveTrajectoryKITTI cannot be used for monocular." << endl;
-        return;
+        return; // 함수 빠져나옴
     }
 
-    vector<KeyFrame*> vpKFs = mpAtlas->GetAllKeyFrames();
-    sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);
+    vector<KeyFrame*> vpKFs = mpAtlas->GetAllKeyFrames();   // Atlas에서 모든 Keyframe을 담아 Vector에 저장
+    sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);          // KeyFrame ID를 기준으로 정렬
 
     // Transform all keyframes so that the first keyframe is at the origin.
     // After a loop closure the first keyframe might not be at the origin.
-    cv::Mat Two = vpKFs[0]->GetPoseInverse();
 
-    ofstream f;
+    // 첫번째 KeyFrame을 원점으로 모든 Keyframe들의 Transform을 계산합니다.
+    // Loop clousre를 한 이후에는 첫번째 KeyFrame이 원점이 아닐수도 있습니다.   
+    cv::Mat Two = vpKFs[0]->GetPoseInverse();   // 첫번째 key frame을 기준으로 cam to world transformation matrix 값을 Two(origin to world)에 저장
+
+    ofstream f; // file을 쓰기 위함
     f.open(filename.c_str());
-    f << fixed;
+    f << fixed; // 소숫점 출력을 6자리로 고정
 
     // Frame pose is stored relative to its reference keyframe (which is optimized by BA and pose graph).
     // We need to get first the keyframe pose and then concatenate the relative transformation.
     // Frames not localized (tracking failure) are not saved.
 
+    // Frame의 포즈는 Reference keyframe을 기준으로 저장됩니다. (BA와 pose graph를 활용하여 최적화를 진행)  
+    // keyframe의 포즈를 얻은 다음, 상대적인 transformation을 결합해야 합니다.  
+    // Tracking이 실패할 경우, frame을 저장하지 않습니다.
+
     // For each frame we have a reference keyframe (lRit), the timestamp (lT) and a flag
     // which is true when tracking failed (lbL).
+
+    // lRit - Reference keyframe의 list에서 첫번째 key frame (iteration 돌기 위함)
+    // lT   - Timestamp에 대한 list에서 첫번째 Timestamp
+    // lbL  - tracking이 fail 됐는지 아닌지 알 수 있는 flag
     list<ORB_SLAM3::KeyFrame*>::iterator lRit = mpTracker->mlpReferences.begin();
     list<double>::iterator lT = mpTracker->mlFrameTimes.begin();
+
+    // for문을 통해 iteration을 돌면서 Reference keyframe 기준으로 KeyFrame들의 상대적인 Transformation matrix를 순회
+    // for문을 한번 돌때마다 lit++, lRit++, lT++
     for(list<cv::Mat>::iterator lit=mpTracker->mlRelativeFramePoses.begin(), lend=mpTracker->mlRelativeFramePoses.end();lit!=lend;lit++, lRit++, lT++)
     {
-        ORB_SLAM3::KeyFrame* pKF = *lRit;
+        ORB_SLAM3::KeyFrame* pKF = *lRit;   // Reference keyframe중 하나를 pKF로 가르킨다.
 
-        cv::Mat Trw = cv::Mat::eye(4,4,CV_32F);
+        cv::Mat Trw = cv::Mat::eye(4,4,CV_32F); // world to refrenceKF에 대한 ideneity행렬 생성
+                                                // reference frame[0]이 결국 world frame이기 때문에 ideneity matrix
 
-        while(pKF->isBad())
+        while(pKF->isBad()) // Reference keyframe이 Bad일 경우
         {
-            Trw = Trw*pKF->mTcp;
-            pKF = pKF->GetParent();
+            // pKF->mTcp는 Bad flag가 활성화 되었을때 계산됨
+            // pKF->mTcp: parentKF을 기준으로 한 pose
+            //            parentKF의 pose는 world-coordinate기준
+            Trw = Trw*pKF->mTcp;    // spanning_tree에 속한 KF to referenceKF
+            pKF = pKF->GetParent(); // spanning tree에서 parent의 KF을 가져옴
+
+            // pKF->isBad()가 false가 될때까지 반복해서 탐색
         }
 
-        Trw = Trw*pKF->GetPose()*Two;
+        // referenceKF[first KF]를 기준의 currentKF에 대한 변환행렬
+        // badKF이 아니면: world to cam
+        // badKF이면    : world to parentKF_cam
+        Trw = Trw*pKF->GetPose()*Two; // Tcp*Tpw*Twb0=Tcb0 where b0 is the new world reference
 
-        cv::Mat Tcw = (*lit)*Trw;
-        cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t();
-        cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);
+        cv::Mat Tcw = (*lit)*Trw;       // first camera 기준 to current KF
+        cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t();  // camera to world Rotation Matrix
+        cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);        // camera to world translation vector
 
+        // camera to world Rotation matrix (3x3) | translation vector (3x1) 값을 차례로 file에 write
         f << setprecision(9) << Rwc.at<float>(0,0) << " " << Rwc.at<float>(0,1)  << " " << Rwc.at<float>(0,2) << " "  << twc.at<float>(0) << " " <<
              Rwc.at<float>(1,0) << " " << Rwc.at<float>(1,1)  << " " << Rwc.at<float>(1,2) << " "  << twc.at<float>(1) << " " <<
              Rwc.at<float>(2,0) << " " << Rwc.at<float>(2,1)  << " " << Rwc.at<float>(2,2) << " "  << twc.at<float>(2) << endl;
@@ -755,20 +779,22 @@ vector<cv::KeyPoint> System::GetTrackedKeyPointsUn()
 
 double System::GetTimeFromIMUInit()
 {
-    double aux = mpLocalMapper->GetCurrKFTime()-mpLocalMapper->mFirstTs;
-    if ((aux>0.) && mpAtlas->isImuInitialized())
-        return mpLocalMapper->GetCurrKFTime()-mpLocalMapper->mFirstTs;
+    double aux = mpLocalMapper->GetCurrKFTime()-mpLocalMapper->mFirstTs;  
+    // Local mapper에서 현재 KeyFrame timestamp - 첫번째 keyframe timestamp
+
+    if ((aux>0.) && mpAtlas->isImuInitialized())    // IMU initialization이 된 후, aux 값이 양수인 경우
+        return mpLocalMapper->GetCurrKFTime()-mpLocalMapper->mFirstTs;  // 그 값 그대로 return
     else
-        return 0.f;
+        return 0.f; // 음수일 경우 0을 return
 }
 
 bool System::isLost()
 {
-    if (!mpAtlas->isImuInitialized())
+    if (!mpAtlas->isImuInitialized())   // IMU 초기화가 되어있으면 무조건 lost 상태는 일어나지 않음
         return false;
     else
     {
-        if ((mpTracker->mState==Tracking::LOST))
+        if ((mpTracker->mState==Tracking::LOST))    // IMU 초기화가 되어있지 않고, tracking state가 lost일 경우
             return true;
         else
             return false;
@@ -783,16 +809,19 @@ bool System::isFinished()
 
 void System::ChangeDataset()
 {
+    // 여기서 말하는 Dataset 1개 = Map 1개
+
+    // Atlas에서 current map에서 가지고 있는 key frame의 갯수를 가져와서 12개보다 작으면
     if(mpAtlas->GetCurrentMap()->KeyFramesInMap() < 12)
     {
         mpTracker->ResetActiveMap();
     }
-    else
+    else    // 12개보다 크면
     {
-        mpTracker->CreateMapInAtlas();
+        mpTracker->CreateMapInAtlas();  // Map을 관리하기 위한 map 객체 생성
     }
 
-    mpTracker->NewDataset();
+    mpTracker->NewDataset();    // mnNumDataset의 변수를 1 증가
 }
 
 #ifdef REGISTER_TIMES
