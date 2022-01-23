@@ -500,6 +500,7 @@ void System::SaveKeyFrameTrajectoryTUM(const string &filename)
     f.close();
 }
 
+
 void System::SaveTrajectoryEuRoC(const string &filename)
 {
 
@@ -510,86 +511,113 @@ void System::SaveTrajectoryEuRoC(const string &filename)
         return;
     }*/
 
-    vector<Map*> vpMaps = mpAtlas->GetAllMaps();
-    Map* pBiggerMap;
-    int numMaxKFs = 0;
-    for(Map* pMap :vpMaps)
+    vector<Map*> vpMaps = mpAtlas->GetAllMaps(); // 모든 Atlas map을 가져옵니다.
+    Map* pBiggerMap;       // 가장 큰 map을 지정하는 변수 (KeyFrame의 개수가 가장 많은게 중심이 되는 map)
+    int numMaxKFs = 0;     // 최대 KeyFrame의 개수
+    for(Map* pMap :vpMaps) // 모든 Atlas map에 대하여 반복문을 순회합니다.
     {
-        if(pMap->GetAllKeyFrames().size() > numMaxKFs)
+        if(pMap->GetAllKeyFrames().size() > numMaxKFs) // 가져온 map의 keyframe의 개수가 numMaxKFs보다 크면
         {
-            numMaxKFs = pMap->GetAllKeyFrames().size();
-            pBiggerMap = pMap;
+            numMaxKFs = pMap->GetAllKeyFrames().size(); // numMaxKFs의 값을 새로운 값으로 업데이트 합니다.
+            pBiggerMap = pMap; // 가장 큰 Map을 pBiggerMap으로 새롭게 지정해줍니다.
+                               // KeyFrame의 개수가 가장 많은것이 중심이 되는 map으로 설정합니다.
         }
     }
 
-    vector<KeyFrame*> vpKFs = pBiggerMap->GetAllKeyFrames();
-    sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);
+    vector<KeyFrame*> vpKFs = pBiggerMap->GetAllKeyFrames(); // BiggerMap으로부터 모든 KeyFrame정보를 가져옵니다.
+    sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId); // KeyFrame에 대한 Id정보를 기준으로 오름차순으로 정렬합니다.
 
     // Transform all keyframes so that the first keyframe is at the origin.
     // After a loop closure the first keyframe might not be at the origin.
-    cv::Mat Twb; // Can be word to cam0 or world to b dependingo on IMU or not.
-    if (mSensor==IMU_MONOCULAR || mSensor==IMU_STEREO)
-        Twb = vpKFs[0]->GetImuPose();
-    else
-        Twb = vpKFs[0]->GetPoseInverse();
+    // 첫 번째 KeyFrame이 원점이 되도록 모든 KeyFrame을 변환합니다.
+    // LoopClosure 이후 첫 번재 KeyFrame이 원점이 위치하지 않을 수도 있습니다.
+    cv::Mat Twb; // IMU의 유무에 따라 (world to cam0) 또는 (world to body)가 될 수 있음
+    if (mSensor==IMU_MONOCULAR || mSensor==IMU_STEREO) // IMU를 사용하는 경우
+        Twb = vpKFs[0]->GetImuPose(); // 첫번째 KeyFrame으로 부터 IMU Pose정보를 가져옴 (body[0] to world)
+    else // IMU를 사용하지 않는 경우
+        Twb = vpKFs[0]->GetPoseInverse(); // 첫번째 KeyFrame으로 부터 Camera Pose정보의 Inverse정보를 가져옴
+                                          // (camera[0] to world) 
 
-    ofstream f;
-    f.open(filename.c_str());
-    f << fixed;
+    ofstream f;                // Trajectory 저장을 위한 객체 변수 선언
+    f.open(filename.c_str());  // @param filename으로 파일 open        
+    f << fixed;                // 저장될 값의 소수점을 고정(default: 6자리)
 
     // Frame pose is stored relative to its reference keyframe (which is optimized by BA and pose graph).
     // We need to get first the keyframe pose and then concatenate the relative transformation.
-    // Frames not localized (tracking failure) are not saved.
+    // Frames not localized (tracking failure) are not saved
+    
+    // Frame pose는 참조프레임(BA and Pose graph)을 기준으로 저장
+    // 먼저 첫번째 Keyframe pose를 얻은 다음 상대 변환을 연결해야됨
+    // tracking failure로 인해 localization이 되지 않은 경우 저장되지 않음    
 
     // For each frame we have a reference keyframe (lRit), the timestamp (lT) and a flag
     // which is true when tracking failed (lbL).
-    list<ORB_SLAM3::KeyFrame*>::iterator lRit = mpTracker->mlpReferences.begin();
-    list<double>::iterator lT = mpTracker->mlFrameTimes.begin();
-    list<bool>::iterator lbL = mpTracker->mlbLost.begin();
+    // 각 프레임에 대해 참조 Keyframe(lRit), timestamp(lT), flag를 포함
+    // tracking fail의 경우 (lbL)이 true값을 갖음
+    list<ORB_SLAM3::KeyFrame*>::iterator lRit = mpTracker->mlpReferences.begin(); // reference KF에 대한 포인터
+    list<double>::iterator lT = mpTracker->mlFrameTimes.begin();                  // timestamp
+    list<bool>::iterator lbL = mpTracker->mlbLost.begin();                        // tracking fail 여부(fail==true)
 
+    // RelativeFramePoses에 대하여 for문 순회
+    // 이 for문 구문에서 trajectory를 정렬하고 파일로 작성
+    // RelativeFramePoses은 기본적으로 Reference Keyframe에 대한 각 Keyframe의 relative transformation을 포함
+    // RelativeFramePoses(lit) / mlpReferences(lRit) / mlFrameTimes(lT) / mlbLost(lbL) 는 개수가 동일
     for(list<cv::Mat>::iterator lit=mpTracker->mlRelativeFramePoses.begin(),
         lend=mpTracker->mlRelativeFramePoses.end();lit!=lend;lit++, lRit++, lT++, lbL++)
     {
-        if(*lbL)
+        if(*lbL) // KF이 tracking fail인 경우 skip
             continue;
 
+        KeyFrame* pKF = *lRit; // 참조KF을 가져옴
 
-        KeyFrame* pKF = *lRit;
+        cv::Mat Trw = cv::Mat::eye(4,4,CV_32F); // world to refrenceKF에 대한 ideneity행렬 생성
+                                                // reference frame[0]이 결국 world frame이기 때문에 ideneity matrix
 
-        cv::Mat Trw = cv::Mat::eye(4,4,CV_32F);
-
-        // If the reference keyframe was culled, traverse the spanning tree to get a suitable keyframe.
+        // KeyFrame이 존재하지 않으면 skip
         if (!pKF)
             continue;
 
-        while(pKF->isBad())
-        {
-            Trw = Trw*pKF->mTcp;
-            pKF = pKF->GetParent();
+        // If the reference keyframe was culled, traverse the spanning tree to get a suitable keyframe.
+        // reference KF이 컬링된 경우 spanning tree를 탐색하여 적절한 keyframe을 가져옴
+        while(pKF->isBad()) // Bad KF인 경우 (parent KF과 child KF에 대한 공통 관측값이 없는경우 Bad-falg set)                            
+        {            
+            // pKF->mTcp는 Bad flag가 활성화 되었을때 계산됨
+            // pKF->mTcp: parentKF을 기준으로 한 pose
+            //            parentKF의 pose는 world-coordinate기준
+            Trw = Trw*pKF->mTcp;    // spanning_tree에 속한 KF to referenceKF
+            pKF = pKF->GetParent(); // spanning tree에서 parent의 KF을 가져옴
+
+            // pKF->isBad()가 false가 될때까지 반복해서 탐색
         }
 
+        // pKF이 존재하지 않고 or pKF이 속한 map이 BiggerMap이 아닌경우 => skip
         if(!pKF || pKF->GetMap() != pBiggerMap)
         {
             continue;
         }
 
+        // referenceKF[first KF]를 기준의 currentKF에 대한 변환행렬
+        // badKF이 아니면: world to cam
+        // badKF이면    : world to parentKF_cam
         Trw = Trw*pKF->GetPose()*Twb; // Tcp*Tpw*Twb0=Tcb0 where b0 is the new world reference
 
-        if (mSensor == IMU_MONOCULAR || mSensor == IMU_STEREO)
+        if (mSensor == IMU_MONOCULAR || mSensor == IMU_STEREO) // IMU 사용하는 경우
         {
-            cv::Mat Tbw = pKF->mImuCalib.Tbc*(*lit)*Trw;
-            cv::Mat Rwb = Tbw.rowRange(0,3).colRange(0,3).t();
-            cv::Mat twb = -Rwb*Tbw.rowRange(0,3).col(3);
-            vector<float> q = Converter::toQuaternion(Rwb);
+            cv::Mat Tbw = pKF->mImuCalib.Tbc*(*lit)*Trw;       // first camera 기준 to current KF pose
+            cv::Mat Rwb = Tbw.rowRange(0,3).colRange(0,3).t(); // rotation  행렬 추출
+            cv::Mat twb = -Rwb*Tbw.rowRange(0,3).col(3);       // translate 행렬 추출
+            vector<float> q = Converter::toQuaternion(Rwb);    // rotation to quaternion 변환
             f << setprecision(6) << 1e9*(*lT) << " " <<  setprecision(9) << twb.at<float>(0) << " " << twb.at<float>(1) << " " << twb.at<float>(2) << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;
+            // 저장형식: [timestamp] [translate] [quaternion]
         }
         else
         {
-            cv::Mat Tcw = (*lit)*Trw;
-            cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t();
-            cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);
-            vector<float> q = Converter::toQuaternion(Rwc);
+            cv::Mat Tcw = (*lit)*Trw;                          // first camera 기준 to current KF pose
+            cv::Mat Rwc = Tcw.rowRange(0,3).colRange(0,3).t(); // rotation  행렬 추출
+            cv::Mat twc = -Rwc*Tcw.rowRange(0,3).col(3);       // translate 행렬 추출
+            vector<float> q = Converter::toQuaternion(Rwc);    // rotation to quaternion 변환
             f << setprecision(6) << 1e9*(*lT) << " " <<  setprecision(9) << twc.at<float>(0) << " " << twc.at<float>(1) << " " << twc.at<float>(2) << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;
+            // 저장형식: [timestamp] [translate] [quaternion]
         }
 
     }
@@ -603,47 +631,52 @@ void System::SaveKeyFrameTrajectoryEuRoC(const string &filename)
 {
     cout << endl << "Saving keyframe trajectory to " << filename << " ..." << endl;
 
-    vector<Map*> vpMaps = mpAtlas->GetAllMaps();
-    Map* pBiggerMap;
-    int numMaxKFs = 0;
-    for(Map* pMap :vpMaps)
+    vector<Map*> vpMaps = mpAtlas->GetAllMaps(); // 모든 Atlas map을 가져옵니다.
+    Map* pBiggerMap;        // 가장 큰 map을 지정하는 변수 (KeyFrame의 개수가 가장 많은게 중심이 되는 map)
+    int numMaxKFs = 0;      // 최대 KeyFrame의 개수
+    for(Map* pMap :vpMaps)  // 모든 Atlas map에 대하여 반복문을 순회합니다.
     {
-        if(pMap->GetAllKeyFrames().size() > numMaxKFs)
+        if(pMap->GetAllKeyFrames().size() > numMaxKFs)  // 가져온 map의 keyframe의 개수가 numMaxKFs보다 크면
         {
-            numMaxKFs = pMap->GetAllKeyFrames().size();
-            pBiggerMap = pMap;
+            numMaxKFs = pMap->GetAllKeyFrames().size(); // numMaxKFs의 값을 새로운 값으로 업데이트 합니다.
+            pBiggerMap = pMap; // 가장 큰 Map을 pBiggerMap으로 새롭게 지정해줍니다.
+                               // KeyFrame의 개수가 가장 많은것이 중심이 되는 map으로 설정합니다.
         }
     }
 
-    vector<KeyFrame*> vpKFs = pBiggerMap->GetAllKeyFrames();
-    sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);
+    vector<KeyFrame*> vpKFs = pBiggerMap->GetAllKeyFrames(); // BiggerMap으로부터 모든 KeyFrame정보를 가져옵니다.
+    sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);           // KeyFrame에 대한 Id정보를 기준으로 오름차순으로 정렬합니다.
 
     // Transform all keyframes so that the first keyframe is at the origin.
     // After a loop closure the first keyframe might not be at the origin.
-    ofstream f;
-    f.open(filename.c_str());
-    f << fixed;
+    // 첫 번째 KeyFrame이 원점이 되도록 모든 KeyFrame을 변환합니다.
+    // LoopClosure 이후 첫 번재 KeyFrame이 원점이 위치하지 않을 수도 있습니다.
+    ofstream f;                // Trajectory 저장을 위한 객체 변수 선언
+    f.open(filename.c_str());  // @param filename으로 파일 open   
+    f << fixed;                // 저장될 값의 소수점을 고정(default: 6자리)
 
+    // 가장 큰 map에대한 KeyFrame수만큼 for문 순회
     for(size_t i=0; i<vpKFs.size(); i++)
     {
-        KeyFrame* pKF = vpKFs[i];
+        KeyFrame* pKF = vpKFs[i]; // i번째 Keyframe grap
 
-        if(pKF->isBad())
+        if(pKF->isBad()) // Bad KF인 경우 skip
             continue;
-        if (mSensor == IMU_MONOCULAR || mSensor == IMU_STEREO)
+        if (mSensor == IMU_MONOCULAR || mSensor == IMU_STEREO) // IMU를 사용하는 경우
         {
-            cv::Mat R = pKF->GetImuRotation().t();
-            vector<float> q = Converter::toQuaternion(R);
-            cv::Mat twb = pKF->GetImuPosition();
-            f << setprecision(6) << 1e9*pKF->mTimeStamp  << " " <<  setprecision(9) << twb.at<float>(0) << " " << twb.at<float>(1) << " " << twb.at<float>(2) << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;
-
+            cv::Mat R = pKF->GetImuRotation().t();        // 해당 KF에서 IMU 기준의 rotation 행렬 get [body to world ?[햇갈림]]
+            vector<float> q = Converter::toQuaternion(R); // rotation to quaternion
+            cv::Mat twb = pKF->GetImuPosition();          // translate get [body to world]
+            f << setprecision(6) << 1e9*pKF->mTimeStamp  << " " <<  setprecision(9) << twb.at<float>(0) << " " << twb.at<float>(1) << " " << twb.at<float>(2) << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;\
+            // 저장형식: [timestamp] [translate] [quaternion]
         }
         else
         {
-            cv::Mat R = pKF->GetRotation();
-            vector<float> q = Converter::toQuaternion(R);
-            cv::Mat t = pKF->GetCameraCenter();
+            cv::Mat R = pKF->GetRotation();               // 해당 KF에서 IMU 기준의 rotation 행렬 get [cam to world ?[햇갈림]]
+            vector<float> q = Converter::toQuaternion(R); // rotation to quaternion
+            cv::Mat t = pKF->GetCameraCenter();           // translate get [cam to world]
             f << setprecision(6) << 1e9*pKF->mTimeStamp << " " <<  setprecision(9) << t.at<float>(0) << " " << t.at<float>(1) << " " << t.at<float>(2) << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;
+            // 저장형식: [timestamp] [translate] [quaternion]
         }
     }
     f.close();
